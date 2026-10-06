@@ -1,0 +1,43 @@
+{
+  "_note": "slug -> the model. Run names carry the slug, so a slug means the same model whichever API serves it. Default API is OpenRouter (key file and proxy: harness/llm.py). A model with \"api\" goes to that entry of _apis and needs \"price\" (USD per million tokens: input, cached input, output) for spend to be counted. `cache: explicit` marks the prompt for caching on OpenRouter (Anthropic models cache only what is marked). Optional: max_usd (per run), max_tokens, reasoning, provider, temperature, context. Check ids and prices: python3 harness/bench.py check. Another file can be used with FDEGYM_MODELS=<path>. Routing that belongs to one machine (another API's address, key file paths) goes in a copy outside version control, used with FDEGYM_MODELS.",
+  "_apis": {},
+  "haiku-4.5": {
+    "id": "anthropic/claude-haiku-4.5",
+    "cache": "explicit"
+  },
+  "gemini-3.8-flash": {
+    "id": "google/gemini-3.8-flash"
+  },
+  "deepseek-v4.1-flash": {
+    "id": "deepseek/deepseek-v4.1-flash"
+  },
+  "glm-5.3-flash": {
+    "id": "z-ai/glm-5.3-flash"
+  },
+  "mistral-small-4": {
+    "id": "mistralai/mistral-small-2603"
+  },
+  "qwen-3.8-flash": {
+    "id": "qwen/qwen3.8-flash"
+  },
+  "opus-5.5": {
+    "id": "anthropic/claude-opus-5.5",
+    "cache": "explicit"
+  },
+  "sonnet-5.5": {
+    "id": "anthropic/claude-sonnet-5.5",
+    "cache": "explicit"
+  },
+  "gpt-6.1-sol": {
+    "id": "openai/gpt-6.1-sol"
+  },
+  "gpt-6-astra": {
+    "id": "openai/gpt-6-astra"
+  },
+  "gpt-6-luna": {
+    "id": "openai/gpt-6-luna"
+  },
+  "gpt-5.5": {
+    "id": "openai/gpt-5.5"
+  }
+}

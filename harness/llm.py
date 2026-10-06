@@ -1,8 +1,9 @@
 """Minimal OpenRouter client for the harness (grader, stakeholder matcher, LLM gateway).
 
-The key comes from OPENROUTER_API_KEY, or from the file FDEGYM_OPENROUTER_KEY_FILE names; it is
-never written anywhere. FDEGYM_PROXY sends the traffic through an HTTP proxy. Every call is
-appended to a usage log so spend is visible.
+The key is read from a file (FDEGYM_OPENROUTER_KEY_FILE, default ~/.fdegym/openrouter_key) and never
+written anywhere. It is not taken from the environment: what a process is started with is inherited
+by the code an agent delivers and can be read by the agent's own commands. FDEGYM_PROXY sends the
+traffic through an HTTP proxy. Every call is appended to a usage log so spend is visible.
 """
 import json
 import os
@@ -12,7 +13,7 @@ import time
 import urllib.error
 import urllib.request
 
-KEY_FILE = os.environ.get("FDEGYM_OPENROUTER_KEY_FILE", "")
+KEY_FILE = os.environ.get("FDEGYM_OPENROUTER_KEY_FILE") or os.path.expanduser("~/.fdegym/openrouter_key")
 PROXY = os.environ.get("FDEGYM_PROXY", "")
 URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -30,11 +31,11 @@ _lock = threading.Lock()
 
 
 def _key():
-    if os.environ.get("OPENROUTER_API_KEY"):
-        return os.environ["OPENROUTER_API_KEY"].strip()
-    if not KEY_FILE:
-        raise SystemExit("no model key: set OPENROUTER_API_KEY, or FDEGYM_OPENROUTER_KEY_FILE to a file that holds it")
-    with open(os.path.expanduser(KEY_FILE)) as f:
+    path = os.path.expanduser(KEY_FILE)
+    if not os.path.exists(path):
+        raise SystemExit("no model key: put an OpenRouter key in %s, or name another file with "
+                         "FDEGYM_OPENROUTER_KEY_FILE (keep it outside the repository and the workspaces)" % path)
+    with open(path) as f:
         return f.read().strip()
 
 
