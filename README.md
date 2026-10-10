@@ -1,8 +1,25 @@
-![FDE Gym, the online judge for the new era: you need practice solving real problems](docs/images/promo.png)
+![FDE Gym, the online judge for the new era: you need practice solving real problems](docs/images/promo.webp)
 
 # FDE Gym
 
-The online judge for the new era: beyond code, end to end. [简体中文](README.zh-CN.md)
+<div align="center">
+
+[How it differs](#how-it-differs-from-the-judges-you-know) · [What is on the site](#what-is-on-the-site) · [Quick start](#quick-start) · [Cases](#cases) · [Documentation](#documentation)
+
+[![Stars](https://img.shields.io/github/stars/deeplethe/fde-gym?style=flat-square&labelColor=161B22&label=STARS&color=FFC220&logo=github&logoColor=FFFFFF)](https://github.com/deeplethe/fde-gym/stargazers)
+[![License](https://img.shields.io/badge/LICENSE-APACHE%202.0-3FB950?style=flat-square&labelColor=161B22)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/deeplethe/fde-gym/checks.yml?branch=main&style=flat-square&labelColor=161B22&label=CI&logo=githubactions&logoColor=FFFFFF)](https://github.com/deeplethe/fde-gym/actions/workflows/checks.yml)
+[![TypeScript](https://img.shields.io/badge/BUILT%20WITH-TYPESCRIPT-3178C6?style=flat-square&labelColor=161B22&logo=typescript&logoColor=FFFFFF)](app)
+
+[![Official site](https://img.shields.io/badge/OFFICIAL-FDE--GYM.COM-FFFFFF?style=flat-square&labelColor=161B22&logo=safari&logoColor=FFFFFF)](https://fde-gym.com)
+[![Cases](https://img.shields.io/badge/CASES-HUGGING%20FACE-FFD21E?style=flat-square&labelColor=161B22&logo=huggingface&logoColor=FFFFFF)](https://huggingface.co/datasets/DeepLethe/FDE-Gym-examples)
+[![Self-hosted](https://img.shields.io/badge/SELF--HOSTED-DOCKER-2496ED?style=flat-square&labelColor=161B22&logo=docker&logoColor=FFFFFF)](docs/self-hosting.md)
+[![Built by DeepLethe](https://img.shields.io/badge/BUILT%20BY-DEEPLETHE-2D333B?style=flat-square&labelColor=161B22)](https://github.com/deeplethe)
+[![中文](https://img.shields.io/badge/LANG-%E4%B8%AD%E6%96%87-DA3633?style=flat-square&labelColor=161B22)](README.zh-CN.md)
+
+</div>
+
+**The online judge for the new era: beyond code, end to end.**
 
 AI can get the code right now, so right code no longer tells engineers apart. What is hard is
 getting the thing done at the customer, and the people who do it are forward deployed engineers
@@ -16,7 +33,7 @@ directing the coding agent, asking one of their people, the terminal, and handin
 on traffic the customer never showed you. Waits are played fast. The same in full quality:
 [demo.mp4](https://github.com/deeplethe/fde-gym/raw/main/docs/images/demo.mp4) (5 MB, downloads).*
 
-![The admin console: the cases in the library, each with its files, runs, mean score and whether it is on offer](docs/images/admin.png)
+![The admin console: the cases in the library, each with its files, runs, mean score and whether it is on offer](docs/images/admin.webp)
 
 *The admin console. Here the library's cases are uploaded, filed, paused and removed; the other tabs
 are a dashboard of members and runs, the machines that run cases, members and their runs, the coding
