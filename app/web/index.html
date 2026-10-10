@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f1f3f8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <title>FDE Gym · The online judge for forward deployed engineers</title>
+    <meta name="description" content="FDE Gym: an open online judge for forward deployed engineers. Each case is a customer delivery: a sponsor with an ask, a system that is running, people to talk to. What is judged is what your system does once it is live." />
+    <script>
+      // Theme before first paint: the saved choice, otherwise the system setting.
+      (function () {
+        var saved; try { saved = localStorage.getItem('fdegym:theme'); } catch (e) {}
+        var dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      })();
+    </script>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=10" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=10" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

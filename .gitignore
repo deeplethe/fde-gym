@@ -1,3 +1,10 @@
 __pycache__/
 *.pyc
 .DS_Store
+# cases are downloaded here to be imported (scripts/fetch_cases.py), not kept in the repository
+/cases/
+/data/
+.env
+app/node_modules/
+app/dist/
+.claude/

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Flat: one tile in the site's blue, one white. The F is three bars; the block after its middle bar is a cursor. -->
+  <rect width="32" height="32" rx="7" fill="#1d4f91"/>
+  <g fill="#ffffff">
+    <rect x="8" y="7" width="4.2" height="18" rx=".7"/>
+    <rect x="8" y="7" width="15.5" height="4.2" rx=".7"/>
+    <rect x="8" y="14.4" width="9" height="4.2" rx=".7"/>
+    <rect x="19.3" y="14.4" width="4.2" height="4.2" rx=".7"/>
+  </g>
+</svg>

@@ -1,0 +1,56 @@
+# A machine that only runs cases, for an FDE Gym site somewhere else.
+#
+#   FDEGYM_SITE_URL=https://gym.example.com FDEGYM_RUNNER_TOKEN=... \
+#     docker compose -f docker-compose.runner.yml up --build -d
+#
+# The runner connects to the site; nothing connects to it, so it needs no open port and can be on
+# any network that reaches the site. It holds no database, object storage or model key. The site
+# has to have the same FDEGYM_RUNNER_TOKEN set. See docs/self-hosting.md.
+#
+# Two containers. The runner, where learners' commands and the code they deliver are run, is on a
+# network that leads nowhere. The gateway beside it is its one door: it passes on what a runner asks
+# of its site (its connection, the cases, the model relays) and nothing else, so nothing that runs
+# on the runner can reach the internet.
+name: fdegym-runner
+services:
+  gateway:
+    build: { context: ., dockerfile: app/Dockerfile }
+    image: fdegym
+    init: true
+    command: ["npm", "run", "gateway"]
+    restart: unless-stopped
+    networks: [outside, sandbox]
+    environment:
+      FDEGYM_SITE_URL: ${FDEGYM_SITE_URL:?set FDEGYM_SITE_URL to the address of the site}
+    # For a site on this same machine, reached as http://host.docker.internal:<port>.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  runner:
+    image: fdegym
+    init: true
+    command: ["npm", "run", "runner"]
+    # Everything learners run is in this container: a ceiling on its processes keeps a runaway one from the host.
+    pids_limit: ${FDEGYM_RUNNER_PIDS:-4096}
+    depends_on: [gateway]
+    restart: unless-stopped
+    networks: [sandbox]
+    environment:
+      FDEGYM_SITE_URL: http://gateway:8787
+      FDEGYM_RUNNER_TOKEN: ${FDEGYM_RUNNER_TOKEN:?set FDEGYM_RUNNER_TOKEN to the site's join token}
+      # What the site calls this machine, and how many runs it takes at once.
+      FDEGYM_RUNNER_NAME: ${FDEGYM_RUNNER_NAME:-}
+      FDEGYM_RUNNER_CAPACITY: ${FDEGYM_RUNNER_CAPACITY:-20}
+      # Limits for one run: processes at once, and the largest file, in MB.
+      FDEGYM_EXEC_NPROC: ${FDEGYM_EXEC_NPROC:-512}
+      FDEGYM_EXEC_FSIZE_MB: ${FDEGYM_EXEC_FSIZE_MB:-2048}
+    volumes:
+      # Workspaces of runs, and the cases fetched to run them. This volume is what makes it this runner.
+      - runner-data:/data
+
+networks:
+  outside:
+  sandbox:
+    internal: true
+
+volumes:
+  runner-data:

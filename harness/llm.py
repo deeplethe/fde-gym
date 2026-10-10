@@ -4,6 +4,10 @@ The key is read from a file (FDEGYM_OPENROUTER_KEY_FILE, default ~/.fdegym/openr
 written anywhere. It is not taken from the environment: what a process is started with is inherited
 by the code an agent delivers and can be read by the agent's own commands. FDEGYM_PROXY sends the
 traffic through an HTTP proxy. Every call is appended to a usage log so spend is visible.
+
+FDEGYM_LLM_URL names another chat-completions endpoint that speaks the same protocol, for a machine
+that must not hold the key itself: it calls a relay that does, and the file then holds whatever that
+relay asks for in place of the key.
 """
 import json
 import os
@@ -15,7 +19,7 @@ import urllib.request
 
 KEY_FILE = os.environ.get("FDEGYM_OPENROUTER_KEY_FILE") or os.path.expanduser("~/.fdegym/openrouter_key")
 PROXY = os.environ.get("FDEGYM_PROXY", "")
-URL = "https://openrouter.ai/api/v1/chat/completions"
+URL = os.environ.get("FDEGYM_LLM_URL") or "https://openrouter.ai/api/v1/chat/completions"
 
 # USD per million tokens (input, output); used only for the local spend estimate.
 PRICES = {

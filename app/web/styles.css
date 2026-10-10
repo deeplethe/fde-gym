@@ -1,0 +1,425 @@
+@import "tailwindcss";
+
+/* Dark mode follows data-theme on <html> (set before first paint in index.html: saved choice, else the system). */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/*
+ * Visual language: liquid glass. The page is a soft field of ambient light; every surface on it is
+ * a pane of frosted glass: translucent, blurring what is behind it, with a bright rim along the top
+ * edge and a deep, soft shadow underneath. Corners are generous and buttons are capsules. One
+ * colour marks primary actions and the current item: a deep blue on a light page, a pale blue on a
+ * dark one, where the page is black under plain white light and the glass turns smoky. Focus is not
+ * marked with the brand colour: a focused control darkens its own outline. Plus Jakarta Sans
+ * throughout, at a slightly heavier regular weight (450).
+ */
+@theme {
+  --font-sans: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  --font-logo: var(--font-sans);
+  /* The DeepLethe wordmark (as on deeplethe.com). */
+  --font-deeplethe: 'Marcellus SC', Georgia, serif;
+
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-xl: 22px;
+
+  /* Surfaces: the page under the light, a pane of glass, and the tint used inside a pane. */
+  --color-layer-0: #f1f3f8;
+  --color-layer-1: rgb(255 255 255 / 0.62);
+  --color-layer-2: rgb(118 118 128 / 0.07);
+  /* Text, strongest to faintest. */
+  --color-label-1: #1d1d1f;
+  --color-label-2: #4c4c52;
+  --color-label-3: #7c7c84;
+  --color-label-4: #b4b4bc;
+  /* Translucent greys for controls, pills, hovers, dividers. */
+  --color-fill-1: rgb(118 118 128 / 0.22);
+  --color-fill-2: rgb(118 118 128 / 0.16);
+  --color-fill-3: rgb(118 118 128 / 0.11);
+  --color-fill-4: rgb(118 118 128 / 0.06);
+  --color-divider: rgb(60 60 67 / 0.11);
+  --color-border: rgb(60 60 67 / 0.14);
+  /* Focus: the ink itself, faint. A darker edge and a soft halo, never the brand colour. */
+  --color-focus-line: rgb(29 29 31 / 0.3);
+  --color-focus-soft: rgb(29 29 31 / 0.06);
+
+  --color-brand: #1d4f91;
+  --color-brand-hover: #173f75;
+  --color-brand-soft: rgb(29 79 145 / 0.1);
+  --color-brand-line: rgb(29 79 145 / 0.5);
+  --color-brand-text: #1d4f91;
+  --color-on-brand: #ffffff;
+  --color-link: #1d4f91;
+  /* The workspace's panes float straight on the page's light; a focused input turns solid. */
+  --color-gutter: transparent;
+  --color-field-focus: rgb(255 255 255 / 0.9);
+  /* Inverse chip (selected segment): dark on light, light on dark. */
+  --color-inverse: #1d1d1f;
+  --color-on-inverse: #ffffff;
+
+  /* Status and difficulty. */
+  --color-ok: #23a55a;
+  --color-warn: #e8a013;
+  --color-warn-text: #a86a00;
+  --color-bad: #e5484d;
+  --color-easy: #23a55a;
+  --color-medium: #d4900a;
+  --color-hard: #e5484d;
+
+  /* Older names still used in places, mapped onto the palette above. */
+  --color-paper: var(--color-layer-0);
+  --color-paper-deep: #e8ebf2;
+  --color-paper-dim: #dfe3ec;
+  --color-ink: var(--color-label-1);
+  --color-ink-soft: var(--color-label-2);
+  --color-mute: var(--color-label-3);
+  --color-line: var(--color-border);
+  --color-brand-deep: var(--color-brand-hover);
+  --color-brand-wash: var(--color-brand-soft);
+
+  /* A pane: bright rim on top, a hairline all round, a soft deep shadow below. */
+  --shadow-card: inset 0 1px 0 var(--glass-rim), inset 0 0 0 1px var(--glass-inner), 0 0 0 1px var(--glass-edge), 0 1px 2px rgb(20 30 60 / 0.05), 0 12px 32px -14px var(--glass-shade);
+  --shadow-raised: inset 0 1px 0 var(--glass-rim), inset 0 0 0 1px var(--glass-inner), 0 0 0 1px var(--glass-edge), 0 2px 4px rgb(20 30 60 / 0.06), 0 20px 44px -16px var(--glass-shade);
+  --shadow-menu: inset 0 1px 0 var(--glass-rim), 0 0 0 1px var(--glass-edge), 0 24px 60px -18px var(--glass-shade), 0 6px 16px -6px rgb(20 30 60 / 0.12);
+}
+
+:root {
+  --glass-rim: rgb(255 255 255 / 0.9);
+  --glass-inner: rgb(255 255 255 / 0.35);
+  --glass-edge: rgb(60 70 100 / 0.09);
+  --glass-shade: rgb(30 45 90 / 0.28);
+  /* Menus and dialogs: thicker glass, so text behind does not show through. */
+  --glass-thick: rgb(255 255 255 / 0.86);
+  --glass-control: rgb(255 255 255 / 0.6);
+  --glass-blur: blur(26px) saturate(180%);
+  --light-1: rgb(29 79 145 / 0.16);
+  --light-2: rgb(140 170 215 / 0.24);
+  --light-3: rgb(29 79 145 / 0.09);
+}
+
+:root[data-theme=dark] {
+  color-scheme: dark;
+  --color-layer-0: #000000;
+  --color-layer-1: rgb(58 58 62 / 0.5);
+  --color-layer-2: rgb(255 255 255 / 0.04);
+  --color-label-1: #f2f2f5;
+  --color-label-2: #bcbcc0;
+  --color-label-3: #88888d;
+  --color-label-4: #58585c;
+  --color-fill-1: rgb(165 165 170 / 0.26);
+  --color-fill-2: rgb(165 165 170 / 0.19);
+  --color-fill-3: rgb(165 165 170 / 0.13);
+  --color-fill-4: rgb(165 165 170 / 0.07);
+  --color-divider: rgb(255 255 255 / 0.08);
+  --color-border: rgb(255 255 255 / 0.12);
+  --color-focus-line: rgb(242 242 245 / 0.34);
+  --color-focus-soft: rgb(242 242 245 / 0.08);
+  --color-brand: #8fbaf0;
+  --color-brand-hover: #a8caf5;
+  --color-brand-soft: rgb(143 186 240 / 0.14);
+  --color-brand-line: rgb(143 186 240 / 0.55);
+  --color-brand-text: #9cc2f3;
+  --color-on-brand: #06213f;
+  --color-link: #9cc2f3;
+  --color-field-focus: rgb(255 255 255 / 0.09);
+  --color-inverse: #f2f2f5;
+  --color-on-inverse: #101116;
+  --color-ok: #58bf8c;
+  --color-warn: #d9ae52;
+  --color-warn-text: #d9ae52;
+  --color-bad: #e88585;
+  --color-easy: #58bf8c;
+  --color-medium: #d9ae52;
+  --color-hard: #e88585;
+  --color-paper-deep: #151517;
+  --color-paper-dim: #1d1d20;
+  --glass-rim: rgb(255 255 255 / 0.16);
+  --glass-inner: rgb(255 255 255 / 0.04);
+  --glass-edge: rgb(255 255 255 / 0.06);
+  --glass-shade: rgb(0 0 0 / 0.6);
+  --glass-thick: rgb(36 36 40 / 0.92);
+  --glass-control: rgb(255 255 255 / 0.08);
+  --light-1: rgb(255 255 255 / 0.16);
+  --light-2: rgb(255 255 255 / 0.08);
+  --light-3: rgb(255 255 255 / 0.05);
+  /* Smoky glass stays neutral: blur what is behind it without boosting its colour. */
+  --glass-blur: blur(26px) saturate(110%);
+}
+
+/* The ambient light the glass sits on: three soft sources, kept faint. They are laid on the page
+   itself and measured from its middle, where the column of content is, so the light scrolls and
+   zooms with what it lights instead of staying put in the window. */
+body {
+  background-color: var(--color-layer-0);
+  background-image:
+    radial-gradient(62rem 42rem at calc(50% - 34rem) -5rem, var(--light-1), transparent 62%),
+    radial-gradient(52rem 38rem at calc(50% + 38rem) 3rem, var(--light-2), transparent 60%),
+    radial-gradient(64rem 46rem at calc(50% + 2rem) 68rem, var(--light-3), transparent 62%);
+  background-repeat: no-repeat;
+}
+
+/* Anything painted in the glass colour frosts what is behind it. */
+.bg-layer-1, .card, .menu { -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+.menu, .glass-thick { background-color: var(--glass-thick); }
+
+@layer base {
+  html { -webkit-font-smoothing: antialiased; }
+  html, body { overflow-x: clip; }
+  body { @apply font-sans text-sm text-label-1; font-weight: 450; }
+  ::selection { background: var(--color-brand-soft); }
+  :focus-visible { outline: 2px solid var(--color-focus-line); outline-offset: 2px; }
+  input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; }
+}
+
+@layer components {
+  /* A pane of glass, the basic surface. */
+  .card { @apply rounded-lg bg-layer-1 shadow-card; }
+
+  /* Form controls: a shallow well pressed into the glass; on focus it turns solid, its outline
+     darkens and a faint halo appears. */
+  .field {
+    @apply w-full rounded-[10px] border border-border px-3 py-2 text-sm text-label-1 outline-none;
+    background-color: var(--glass-control);
+    box-shadow: inset 0 1px 2px rgb(20 30 60 / 0.06);
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .field::placeholder { color: var(--color-label-3); }
+  .field:hover:not(:disabled):not(:focus):not(.field-open) { border-color: var(--color-label-4); }
+  .field:focus, .field-open { background-color: var(--color-field-focus); border-color: var(--color-focus-line); box-shadow: 0 0 0 3px var(--color-focus-soft); }
+  .field:disabled { opacity: 0.6; }
+  .field-label { @apply mb-1.5 block text-[13px] font-medium text-label-2; }
+
+  /* Floating menu under a control. */
+  .menu { @apply rounded-lg p-1.5 shadow-menu; }
+
+  /* Small caption above a group. */
+  .eyebrow { @apply text-xs font-medium text-label-3; }
+
+  /* Buttons are capsules. Primary: tinted glass lit from above. Secondary: clear glass. */
+  .btn { @apply rounded-full; transition: filter 0.15s ease, background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease, color 0.15s ease; }
+  .btn:active:not(:disabled) { transform: translateY(0.5px) scale(0.985); }
+  .btn-primary {
+    color: var(--color-on-brand);
+    background: linear-gradient(180deg, color-mix(in oklab, var(--color-brand) 88%, white), var(--color-brand));
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.32), inset 0 -1px 0 rgb(0 0 0 / 0.12), 0 1px 2px rgb(0 0 0 / 0.14), 0 6px 16px -10px color-mix(in srgb, var(--color-brand) 70%, transparent);
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn-secondary {
+    color: var(--color-label-1);
+    background-color: var(--glass-control);
+    -webkit-backdrop-filter: blur(14px) saturate(160%); backdrop-filter: blur(14px) saturate(160%);
+    box-shadow: inset 0 1px 0 var(--glass-rim), 0 0 0 1px var(--glass-edge), 0 1px 2px rgb(20 30 60 / 0.06), 0 6px 14px -10px var(--glass-shade);
+  }
+  .btn-secondary:hover:not(:disabled) { background-color: var(--color-field-focus); }
+  /* Chips (filters, tags, the current nav item): small capsules of clear glass; the chosen one is tinted like a primary button. */
+  .chip {
+    background-color: var(--glass-control);
+    -webkit-backdrop-filter: blur(14px) saturate(160%); backdrop-filter: blur(14px) saturate(160%);
+    box-shadow: inset 0 1px 0 var(--glass-rim), 0 0 0 1px var(--glass-edge), 0 1px 2px rgb(20 30 60 / 0.05);
+    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  }
+  button.chip:hover { background-color: var(--color-field-focus); }
+  .chip-on, button.chip-on:hover {
+    color: var(--color-on-brand);
+    background: linear-gradient(180deg, color-mix(in oklab, var(--color-brand) 86%, white), var(--color-brand));
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.3), inset 0 -1px 0 rgb(0 0 0 / 0.12), 0 1px 2px rgb(0 0 0 / 0.12), 0 6px 14px -8px color-mix(in srgb, var(--color-brand) 75%, transparent);
+  }
+
+  .btn-ghost { color: var(--color-label-2); background-color: transparent; }
+  .btn-ghost:hover:not(:disabled) { color: var(--color-label-1); background-color: var(--color-fill-3); }
+
+  /* Hide scrollbars on horizontal strips (tabs, nav). */
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+}
+
+/* Rendered markdown (case materials, deliverables, reports). */
+.prose-fde { line-height: 1.7; font-size: 14px; overflow-wrap: anywhere; color: var(--color-label-1); }
+.prose-fde h1 { font-size: 1.35rem; font-weight: 600; margin: 1.2em 0 .6em; }
+.prose-fde h2 { font-size: 1.15rem; font-weight: 600; margin: 1.3em 0 .5em; }
+.prose-fde h3 { font-size: 1rem; font-weight: 600; margin: 1em 0 .4em; }
+.prose-fde > :first-child { margin-top: 0; }
+.prose-fde p, .prose-fde ul, .prose-fde ol, .prose-fde blockquote, .prose-fde pre, .prose-fde table { margin: .6em 0; }
+.prose-fde ul { list-style: disc; padding-left: 1.4em; }
+.prose-fde ol { list-style: decimal; padding-left: 1.4em; }
+.prose-fde li { margin: .2em 0; }
+.prose-fde blockquote { border-left: 3px solid var(--color-brand-line); padding-left: .9em; color: var(--color-label-2); }
+/* A name in running text (a file, a command, a field): the code face in a warm orange, in a faint box
+   with a hairline round it, so that it reads as a thing to type or look up and not as a word. */
+:root { --code-inline: #c2491d; }
+:root[data-theme=dark] { --code-inline: #ef8a6b; }
+.prose-fde code { font-family: var(--font-mono); font-size: .86em; color: var(--code-inline); background: var(--color-fill-4); border: 1px solid var(--color-divider); border-radius: 6px; padding: .1em .38em; }
+.prose-fde pre { background: var(--color-fill-4); border-radius: 10px; padding: .8em 1em; overflow-x: auto; }
+.prose-fde pre code { background: none; border: 0; padding: 0; color: var(--color-label-1); }
+.prose-fde table { border-collapse: collapse; display: block; overflow-x: auto; font-size: 13px; }
+.prose-fde th, .prose-fde td { border: 1px solid var(--color-border); padding: .45em .7em; text-align: left; vertical-align: top; }
+.prose-fde th { font-weight: 600; background: var(--color-fill-4); }
+.prose-fde a { color: var(--color-link); }
+.prose-fde a:hover { text-decoration: underline; }
+.prose-fde hr { border: 0; border-top: 1px solid var(--color-divider); margin: 1.6em 0; }
+.prose-fde strong { font-weight: 600; }
+
+/* Code in a fenced block that names its language (rehype-highlight marks it up). A few colours,
+   chosen to sit with the page's own in each theme; what is not named stays the text's colour. */
+:root { --syn-keyword: #1d4f91; --syn-string: #0a7b53; --syn-number: #b45309; --syn-name: #7a3e9d; --syn-comment: var(--color-label-3); }
+:root[data-theme=dark] { --syn-keyword: #8fbaf0; --syn-string: #7fd1a6; --syn-number: #e5b454; --syn-name: #c4a7f5; }
+.prose-fde pre code.hljs { display: block; color: var(--color-label-1); }
+.prose-fde .hljs-comment, .prose-fde .hljs-quote, .prose-fde .hljs-meta { color: var(--syn-comment); font-style: italic; }
+.prose-fde .hljs-keyword, .prose-fde .hljs-selector-tag, .prose-fde .hljs-literal, .prose-fde .hljs-type, .prose-fde .hljs-built_in, .prose-fde .hljs-tag, .prose-fde .hljs-name { color: var(--syn-keyword); }
+.prose-fde .hljs-string, .prose-fde .hljs-regexp, .prose-fde .hljs-addition, .prose-fde .hljs-symbol, .prose-fde .hljs-bullet { color: var(--syn-string); }
+.prose-fde .hljs-number, .prose-fde .hljs-deletion, .prose-fde .hljs-variable, .prose-fde .hljs-template-variable { color: var(--syn-number); }
+.prose-fde .hljs-attr, .prose-fde .hljs-attribute, .prose-fde .hljs-property, .prose-fde .hljs-title, .prose-fde .hljs-section, .prose-fde .hljs-params { color: var(--syn-name); }
+.prose-fde .hljs-emphasis { font-style: italic; }
+.prose-fde .hljs-strong { font-weight: 600; }
+
+/* Workspace: the code editor keeps its own syntax colours and takes the page's surfaces. */
+.cm-theme, .cm-editor { height: 100%; }
+.cm-editor { background: transparent !important; font-size: 13px; }
+.cm-editor.cm-focused { outline: none; }
+.cm-editor .cm-scroller { font-family: var(--font-mono); line-height: 1.55; }
+.cm-editor .cm-gutters { background: transparent !important; color: var(--color-label-4); border-right: 1px solid var(--color-divider); }
+.cm-editor .cm-activeLine, .cm-editor .cm-activeLineGutter { background-color: var(--color-fill-4) !important; }
+/* Indentation shown as hairlines down the left of a block (see `guides` in the workspace's Editor): one for each level a line is indented by. */
+.cm-editor .cm-line.cm-guides {
+  background-image: repeating-linear-gradient(to right, var(--color-border) 0, var(--color-border) 1px, transparent 1px, transparent calc(var(--unit) * 1ch));
+  background-size: calc(var(--guides) * var(--unit) * 1ch) 100%;
+  background-repeat: no-repeat;
+  background-position: 6px 0;
+}
+
+/* ---- Home page hero */
+
+/* The words that matter in a headline take the brand colour. */
+.hl { color: var(--color-brand-text); }
+
+/* Things that arrive one after another, quickly (all there within a second), then hold. */
+.demo-line { opacity: 0; transform: translateY(6px); animation: demo-in 0.36s ease forwards; animation-delay: calc(var(--i) * 0.11s + 0.05s); }
+@keyframes demo-in { to { opacity: 1; transform: none; } }
+
+/* A run being graded (components/workspace/Grade): requests on their way into the delivered system,
+   and coming out of it judged. It says that work is going on, not how far along it is. */
+.grading { display: flex; align-items: center; gap: 12px; color: var(--color-brand); }
+.grading-lane { position: relative; width: 92px; height: 14px; overflow: hidden; -webkit-mask-image: linear-gradient(to right, transparent, #000 28%, #000 72%, transparent); mask-image: linear-gradient(to right, transparent, #000 28%, #000 72%, transparent); }
+.grading-lane i { position: absolute; top: 4px; left: -8px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-label-3); animation: grading-pass 2.8s linear infinite; }
+.grading-out i { background: currentColor; }
+@keyframes grading-pass { to { transform: translateX(108px); } }
+.grading-system {
+  display: grid; place-items: center; width: 56px; height: 56px; border-radius: 18px; flex: none;
+  background-color: var(--glass-control);
+  box-shadow: inset 0 1px 0 var(--glass-rim), 0 0 0 1px var(--glass-edge), 0 12px 26px -14px var(--glass-shade);
+  animation: grading-beat 1.4s ease-in-out infinite;
+}
+.grading-system svg { width: 26px; height: 26px; }
+@keyframes grading-beat {
+  0%, 100% { outline: 0 solid color-mix(in srgb, currentColor 40%, transparent); outline-offset: 0; }
+  50% { outline: 7px solid transparent; outline-offset: 2px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .grading-system { animation: none; }
+  .grading-lane i { animation: none; }
+  .grading-lane i:nth-child(1) { left: 12px; } .grading-lane i:nth-child(2) { left: 28px; } .grading-lane i:nth-child(3) { left: 44px; } .grading-lane i:nth-child(4) { left: 60px; } .grading-lane i:nth-child(5) { left: 76px; }
+}
+
+/* Cards that answer the pointer rise a little. */
+.lift { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+@media (hover: hover) { .lift:hover { transform: translateY(-2px); box-shadow: var(--shadow-raised); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-line { animation: none; opacity: 1; transform: none; }
+  .lift { transition: none; }
+}
+
+/* ---- Diagrams and small charts sit on a card and take the page's own colours. */
+.viz { --viz-disc: #ffffff; --viz-surface: #ffffff; --div-pos: #1d4f91; --div-neg: #e11d48; --div-mid: #ecebf0; --viz-on-strong: #fcfcfe; }
+:root[data-theme=dark] .viz { --viz-disc: #131315; --viz-surface: #1c1c1e; --div-pos: #8fbaf0; --div-neg: #e88585; --div-mid: #333336; --viz-on-strong: #06213f; }
+
+
+/* ---- The About page's cards are the same panes of glass as every other card, a little rounder. */
+.glass {
+  border-radius: var(--radius-lg);
+  background-color: var(--color-layer-1);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-card);
+}
+/* More light for that page, under its own column: it belongs to the content (placed inside the
+   column and measured from it), so it scrolls and zooms with what it lights. */
+.glass-wash {
+  position: absolute; inset: -2rem -14rem 0 -14rem; z-index: -1; pointer-events: none;
+  background-image:
+    radial-gradient(34rem 28rem at 84% 16rem, rgb(140 170 215 / 0.16), transparent 64%),
+    radial-gradient(44rem 34rem at 60% 52%, rgb(29 79 145 / 0.07), transparent 66%),
+    radial-gradient(40rem 30rem at 22% 88%, rgb(140 170 215 / 0.14), transparent 66%);
+  background-repeat: no-repeat;
+}
+:root[data-theme=dark] .glass-wash {
+  background-image:
+    radial-gradient(34rem 28rem at 84% 16rem, rgb(255 255 255 / 0.06), transparent 64%),
+    radial-gradient(44rem 34rem at 60% 52%, rgb(143 186 240 / 0.06), transparent 66%),
+    radial-gradient(40rem 30rem at 22% 88%, rgb(255 255 255 / 0.05), transparent 66%);
+}
+
+/* ---- The scene on the About page (components/HeroDiagram): the customer's tower, drawn in glass.
+   It has no frame: a few small sources of light sit behind it and spill onto the page around it.
+   The only colour is the accent. Sizes are in cqw, hundredths of the scene's width, so the whole
+   of it scales together. */
+.scene {
+  --scene-ink: #10131f;
+  --scene-ink-2: rgb(16 19 31 / 0.64);
+  --scene-faint: rgb(16 19 31 / 0.3);
+  --scene-accent: #1d4f91;
+  --scene-on-accent: #ffffff;
+  --glass: linear-gradient(140deg, rgb(255 255 255 / 0.78), rgb(255 255 255 / 0.42) 55%, rgb(255 255 255 / 0.58));
+  --glass-rim: rgb(255 255 255 / 0.95);
+  --glass-edge: rgb(255 255 255 / 0.65);
+  --glass-shade: rgb(40 44 110 / 0.3);
+  --light-a: #a9c2f0;
+  --light-b: #9fd8ff;
+  --light-c: #ffc9a8;
+  container-type: inline-size;
+  position: relative;
+  aspect-ratio: 100 / 120;
+  color: var(--scene-ink);
+  font-size: 2.75cqw;
+  line-height: 1.3;
+  isolation: isolate;
+}
+:root[data-theme=dark] .scene {
+  --scene-ink: #f4f6fb;
+  --scene-ink-2: rgb(244 246 251 / 0.68);
+  --scene-faint: rgb(244 246 251 / 0.28);
+  --scene-accent: #8fbaf0;
+  --scene-on-accent: #06213f;
+  /* Darker than the light it sits in, so that what is written on it reads over anything bright behind. */
+  --glass: linear-gradient(140deg, rgb(34 40 48 / 0.72), rgb(14 18 24 / 0.62) 55%, rgb(26 32 40 / 0.7));
+  --glass-rim: rgb(255 255 255 / 0.3);
+  --glass-edge: rgb(255 255 255 / 0.12);
+  --glass-shade: rgb(0 0 0 / 0.7);
+  --light-a: #5b6dff;
+  --light-c: #4f86d6;
+}
+
+/* The light: three small sources, slowly drifting. Nothing clips them. */
+.scene-light { position: absolute; z-index: -1; border-radius: 9999px; filter: blur(7cqw); opacity: 0.6; pointer-events: none; }
+:root[data-theme=dark] .scene-light { opacity: 0.4; }
+.scene-light-a { width: 34cqw; height: 28cqw; left: 2cqw; top: 2cqw; background: var(--light-a); animation: scene-drift 18s ease-in-out infinite alternate; }
+/* On a dark page there is no second light on the right: it was green, and the tower stands there now. */
+:root[data-theme=dark] .scene-light-b { display: none; }
+.scene-light-b { width: 38cqw; height: 32cqw; right: -6cqw; top: 44cqw; background: var(--light-b); animation: scene-drift 24s ease-in-out infinite alternate-reverse; }
+.scene-light-c { width: 40cqw; height: 24cqw; left: 10cqw; bottom: 2cqw; background: var(--light-c); animation: scene-drift 21s ease-in-out infinite alternate; }
+@keyframes scene-drift { from { transform: translate3d(-2cqw, 0, 0) scale(1); } to { transform: translate3d(3cqw, 2cqw, 0) scale(1.1); } }
+
+/* The customer's tower: crystal, lit from the left, with light climbing through it. */
+.scene { --tower-lit-a: rgb(255 255 255 / 0.92); --tower-lit-b: rgb(176 200 240 / 0.5); --tower-shade-a: rgb(140 170 228 / 0.62); --tower-shade-b: rgb(96 128 200 / 0.4); --tower-line: rgb(29 79 145 / 0.2); --tower-rim: rgb(255 255 255 / 0.95); --tower-edge: rgb(29 79 145 / 0.28); }
+:root[data-theme=dark] .scene { --tower-lit-a: rgb(168 196 250 / 0.5); --tower-lit-b: rgb(36 48 84 / 0.5); --tower-shade-a: rgb(52 70 120 / 0.55); --tower-shade-b: rgb(10 14 30 / 0.7); --tower-line: rgb(190 212 255 / 0.13); --tower-rim: rgb(214 228 255 / 0.75); --tower-edge: rgb(190 212 255 / 0.22); }
+.scene-tower { max-width: none; height: auto; filter: drop-shadow(0 2.4cqw 3cqw var(--glass-shade)); }
+.tower-line path { fill: none; stroke: var(--tower-line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.tower-rim { fill: none; stroke: var(--tower-rim); stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
+.tower-edge { fill: none; stroke: var(--tower-edge); stroke-width: 1.4; }
+.tower-lit { fill: var(--scene-accent); opacity: 0.16; animation: tower-glow 6s ease-in-out infinite alternate; }
+@keyframes tower-glow { from { opacity: 0.08; } to { opacity: 0.42; } }
+.tower-flow { fill: none; stroke: var(--scene-accent); stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 26 114; animation: tower-rise 7s linear infinite; filter: drop-shadow(0 0 3px var(--scene-accent)); }
+@keyframes tower-rise { to { stroke-dashoffset: -280; } }
+@media (prefers-reduced-motion: reduce) { .tower-flow, .tower-lit { animation: none; } }
+
+@media (prefers-reduced-motion: reduce) { .scene-light { animation: none; } }

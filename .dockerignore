@@ -1,0 +1,7 @@
+**
+!harness
+!app
+app/node_modules
+app/dist
+**/__pycache__
+**/.DS_Store

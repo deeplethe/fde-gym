@@ -1,0 +1,136 @@
+# FDE Gym with everything it needs: the site, a runner (the machine that runs the cases, here a
+# container), a PostgreSQL database and an S3-compatible object store.
+#
+#   mkdir -p ~/.fdegym && echo "sk-or-..." > ~/.fdegym/openrouter_key
+#   python3 scripts/fetch_cases.py
+#   docker compose up --build   # then open http://127.0.0.1:8787
+#
+# Settings go in .env (see .env.example).
+#
+# To work on the site itself, start only what it depends on and run it from app/:
+#
+#   docker compose up -d postgres storage
+#   cd app && pnpm install && pnpm dev
+#
+# More machines to run cases on: docker-compose.runner.yml, on each of them.
+#
+# Everything listens on this machine only. The passwords and the join token below are for that;
+# before a deployment others can reach, set your own in .env (or point the site at a managed
+# database and at a cloud object store such as Alibaba Cloud OSS, see docs/self-hosting.md).
+name: fdegym
+services:
+  postgres:
+    image: postgres:16
+    networks: [backend]
+    environment:
+      POSTGRES_USER: fdegym
+      POSTGRES_PASSWORD: ${FDEGYM_PG_PASSWORD:-fdegym}
+      POSTGRES_DB: fdegym
+    ports: ["127.0.0.1:${FDEGYM_PG_PORT:-5432}:5432"]
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fdegym -d fdegym"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Object storage for the cases' files, over the S3 protocol. Any S3-compatible service does the
+  # same job; this one is here so that nothing outside this machine is needed.
+  storage:
+    image: rustfs/rustfs:latest
+    networks: [backend]
+    environment:
+      RUSTFS_ACCESS_KEY: ${FDEGYM_S3_ACCESS_KEY_ID:-fdegym}
+      RUSTFS_SECRET_KEY: ${FDEGYM_S3_SECRET_ACCESS_KEY:-fdegym-local-secret}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+    ports:
+      - "127.0.0.1:${FDEGYM_S3_PORT:-9000}:9000"
+      - "127.0.0.1:${FDEGYM_S3_CONSOLE_PORT:-9001}:9001"
+    volumes: [storage-data:/data]
+
+  # The site: pages, accounts, the library, scheduling. It runs no case itself here; the runner does.
+  gym:
+    image: fdegym
+    build: { context: ., dockerfile: app/Dockerfile }
+    init: true
+    depends_on:
+      postgres: { condition: service_healthy }
+      storage: { condition: service_started }
+    networks: [backend, sandbox]
+    ports:
+      # This machine only. Put a reverse proxy with TLS in front before opening it to anyone else.
+      - "127.0.0.1:${FDEGYM_PORT:-8787}:8787"
+    environment:
+      FDEGYM_DATABASE_URL: postgres://fdegym:${FDEGYM_PG_PASSWORD:-fdegym}@postgres:5432/fdegym
+      FDEGYM_OPENROUTER_KEY_FILE: /root/secrets/${FDEGYM_KEY_NAME:-openrouter_key}
+      FDEGYM_S3_ENDPOINT: http://storage:9000
+      FDEGYM_S3_BUCKET: ${FDEGYM_S3_BUCKET:-fdegym}
+      FDEGYM_S3_ACCESS_KEY_ID: ${FDEGYM_S3_ACCESS_KEY_ID:-fdegym}
+      FDEGYM_S3_SECRET_ACCESS_KEY: ${FDEGYM_S3_SECRET_ACCESS_KEY:-fdegym-local-secret}
+      # Runners join with this token. The site runs no case itself.
+      FDEGYM_RUNNER_TOKEN: ${FDEGYM_RUNNER_TOKEN:-fdegym-local-runner-token}
+      FDEGYM_LOCAL_RUNNER: "0"
+      # How many runs one learner may have open at once, and after how many idle days a run is ended.
+      FDEGYM_MAX_OPEN_RUNS: ${FDEGYM_MAX_OPEN_RUNS:-3}
+      FDEGYM_RUN_IDLE_DAYS: ${FDEGYM_RUN_IDLE_DAYS:-14}
+      # The context window of the coding agent's model, in tokens; unset, the provider is asked for it.
+      FDEGYM_AGENT_CONTEXT: ${FDEGYM_AGENT_CONTEXT:-}
+      # How long a run that is over keeps its files on its runner (its result is kept for good).
+      FDEGYM_KEEP_WORKSPACE_DAYS: ${FDEGYM_KEEP_WORKSPACE_DAYS:-30}
+      # Case folders mounted below are brought into the library when the site starts.
+      FDEGYM_IMPORT_DIR: /root/import/cases
+      # Set FDEGYM_PROXY if model calls have to go through an HTTP proxy. From a container the host
+      # is host.docker.internal, not 127.0.0.1.
+      FDEGYM_PROXY: ${FDEGYM_PROXY:-}
+      FDEGYM_ADMIN_EMAILS: ${FDEGYM_ADMIN_EMAILS:-}
+      FDEGYM_PUBLIC_URL: ${FDEGYM_PUBLIC_URL:-}
+      FDEGYM_SECRET: ${FDEGYM_SECRET:-}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - gym-data:/data
+      # The folder that holds the model key. Only the site has it; runners call the site's relay.
+      - ${FDEGYM_KEY_DIR:-~/.fdegym}:/root/secrets:ro
+      # Where scripts/fetch_cases.py puts cases.
+      - ${FDEGYM_CASES_DIR:-./cases}:/root/import/cases:ro
+      # Data that cases share (one of the open cases reads public records from it); beside cases/, where fetch_cases.py puts it.
+      - ${FDEGYM_SHARED_DATA_DIR:-./data}:/root/import/data:ro
+
+  # A runner: workspaces, terminals, the customer's people and grading happen here. It holds none of
+  # the site's secrets and sits on a network of its own with the site, so the code people write
+  # cannot reach the database or the object store.
+  runner:
+    image: fdegym
+    init: true
+    command: ["npm", "run", "runner"]
+    # Everything learners run is in this container: a ceiling on its processes keeps a runaway one from the host.
+    pids_limit: ${FDEGYM_RUNNER_PIDS:-4096}
+    depends_on: [gym]
+    networks: [sandbox]
+    restart: unless-stopped
+    environment:
+      FDEGYM_SITE_URL: http://gym:8787
+      FDEGYM_RUNNER_TOKEN: ${FDEGYM_RUNNER_TOKEN:-fdegym-local-runner-token}
+      FDEGYM_RUNNER_NAME: runner
+      FDEGYM_RUNNER_CAPACITY: ${FDEGYM_RUNNER_CAPACITY:-20}
+      # Limits for one run: processes at once, and the largest file, in MB.
+      FDEGYM_EXEC_NPROC: ${FDEGYM_EXEC_NPROC:-512}
+      FDEGYM_EXEC_FSIZE_MB: ${FDEGYM_EXEC_FSIZE_MB:-2048}
+    volumes:
+      # Workspaces of runs, and the cases fetched to run them. This volume is what makes it this runner.
+      - runner-data:/data
+
+networks:
+  backend:
+  # The runner's network leads nowhere but to the site: learners' commands and the coding agent,
+  # which run there, cannot reach the internet, the database or the object store. The runner needs
+  # none of them itself (cases come from the site, and model calls go through it).
+  sandbox:
+    internal: true
+
+volumes:
+  postgres-data:
+  storage-data:
+  gym-data:
+  runner-data:
