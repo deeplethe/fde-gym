@@ -1,8 +1,25 @@
-![FDE Gym，新时代的 OJ：你需要练的是解决真实的问题](docs/images/promo.png)
+![FDE Gym，新时代的 OJ：你需要练的是解决真实的问题](docs/images/promo.webp)
 
 # FDE Gym
 
-新时代的 OJ：超越代码，聚焦于端到端。[English](README.md)
+<div align="center">
+
+[和传统 OJ 的不同](#和你用过的-oj-有什么不同) · [站里有什么](#站里有什么) · [快速开始](#快速开始) · [题目](#题目) · [文档](#文档)
+
+[![Stars](https://img.shields.io/github/stars/deeplethe/fde-gym?style=flat-square&labelColor=161B22&label=STARS&color=FFC220&logo=github&logoColor=FFFFFF)](https://github.com/deeplethe/fde-gym/stargazers)
+[![License](https://img.shields.io/badge/LICENSE-APACHE%202.0-3FB950?style=flat-square&labelColor=161B22)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/deeplethe/fde-gym/checks.yml?branch=main&style=flat-square&labelColor=161B22&label=CI&logo=githubactions&logoColor=FFFFFF)](https://github.com/deeplethe/fde-gym/actions/workflows/checks.yml)
+[![TypeScript](https://img.shields.io/badge/BUILT%20WITH-TYPESCRIPT-3178C6?style=flat-square&labelColor=161B22&logo=typescript&logoColor=FFFFFF)](app)
+
+[![Official site](https://img.shields.io/badge/OFFICIAL-FDE--GYM.COM-FFFFFF?style=flat-square&labelColor=161B22&logo=safari&logoColor=FFFFFF)](https://fde-gym.com)
+[![Cases](https://img.shields.io/badge/CASES-HUGGING%20FACE-FFD21E?style=flat-square&labelColor=161B22&logo=huggingface&logoColor=FFFFFF)](https://huggingface.co/datasets/DeepLethe/FDE-Gym-examples)
+[![Self-hosted](https://img.shields.io/badge/SELF--HOSTED-DOCKER-2496ED?style=flat-square&labelColor=161B22&logo=docker&logoColor=FFFFFF)](docs/self-hosting.md)
+[![Built by DeepLethe](https://img.shields.io/badge/BUILT%20BY-DEEPLETHE-2D333B?style=flat-square&labelColor=161B22)](https://github.com/deeplethe)
+[![English](https://img.shields.io/badge/LANG-ENGLISH-DA3633?style=flat-square&labelColor=161B22)](README.md)
+
+</div>
+
+**新时代的 OJ：超越代码，聚焦于端到端。**
 
 AI 已经能把代码写对了，代码对不对不再是分水岭。难的是到客户现场把事情办成，做这件事的人叫 FDE（Forward Deployed Engineer，前沿部署工程师）。FDE Gym 的每道题都是一次真实的客户交付：你带着 coding agent 去做，交上来的系统上线后见分晓。
 
@@ -10,7 +27,7 @@ AI 已经能把代码写对了，代码对不对不再是分水岭。难的是�
 
 *半分钟看完一遍：从题库进一道题，看客户给的材料，指挥 coding agent，问客户方的人，用终端，最后提交，在客户没给你看过的流量上评分。等待的部分是倍速。原画质版本：[demo.mp4](https://github.com/deeplethe/fde-gym/raw/main/docs/images/demo.mp4)（5 MB，点击下载）。*
 
-![管理后台：题库里的每道题，它的文件、练习次数、平均得分和是否开放](docs/images/admin.png)
+![管理后台：题库里的每道题，它的文件、练习次数、平均得分和是否开放](docs/images/admin.webp)
 
 *管理后台。题目在这里上传、归类、暂停和移除；其余几页是成员和练习的数据看板、沙箱机、用户和他们的练习、coding agent 的模型和花费上限、邮件服务。*
 
