@@ -30,8 +30,7 @@ system is judged once it is live.
 
 *Half a minute on the site: from the case list into a case, reading what the customer handed over,
 directing the coding agent, asking one of their people, the terminal, and handing over to be graded
-on traffic the customer never showed you. Waits are played fast. The same in full quality:
-[demo.mp4](https://github.com/deeplethe/fde-gym/raw/main/docs/images/demo.mp4) (5 MB, downloads).*
+on traffic the customer never showed you. Waits are played fast.*
 
 ![The admin console: the cases in the library, each with its files, runs, mean score and whether it is on offer](docs/images/admin.webp)
 
