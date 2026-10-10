@@ -1,4 +1,4 @@
-![FDE Gym, the online judge for the new era: you need practice solving real problems](docs/images/promo.webp)
+![FDE Gym, the online judge for the new era: you need practice solving real problems](docs/images/banner.webp)
 
 # FDE Gym
 

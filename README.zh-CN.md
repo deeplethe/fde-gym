@@ -1,4 +1,4 @@
-![FDE Gym，新时代的 OJ：你需要练的是解决真实的问题](docs/images/promo.webp)
+![FDE Gym，新时代的 OJ：你需要练的是解决真实的问题](docs/images/banner.webp)
 
 # FDE Gym
 
