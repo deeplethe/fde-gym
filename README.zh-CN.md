@@ -4,11 +4,13 @@
 
 AI 已经能把代码写对了，代码对不对不再是分水岭。难的是到客户现场把事情办成，做这件事的人叫 FDE（Forward Deployed Engineer，前沿部署工程师）。FDE Gym 的每道题都是一次真实的客户交付：你带着 coding agent 去做，交上来的系统上线后见分晓。
 
-[![训练台：题目的文件、正在看的文件、coding agent](docs/images/workbench.png)](docs/images/demo.mp4)
+![完整演示：从题库进一道题，训练台，提交评分](docs/images/demo.gif)
+
+*半分钟看完一遍：从题库进一道题，看客户给的材料，指挥 coding agent，问客户方的人，用终端，最后提交，在客户没给你看过的流量上评分。等待的部分是倍速。原画质版本：[demo.mp4](https://github.com/deeplethe/fde-gym/raw/main/docs/images/demo.mp4)（5 MB，点击下载）。*
+
+![训练台：题目的文件、正在看的文件、coding agent](docs/images/workbench.png)
 
 *训练台。左边是客户给的背景资料和你要交的交付物，中间是正在看的文件，右边是 coding agent、客户列表、终端和你的改动。*
-
-**[看半分钟的完整演示](docs/images/demo.mp4)**：从题库进一道题，看客户给的材料，指挥 agent，问客户方的人，用终端，最后提交，在客户没给你看过的流量上评分。
 
 ## 和你用过的 OJ 有什么不同
 
