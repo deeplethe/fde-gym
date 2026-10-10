@@ -30,7 +30,8 @@ let reply: (seen: Seen) => Reply = () => ({ text: 'ok' });
 
 before(async () => {
   const admin = new pg.Client({ connectionString: ADMIN, connectionTimeoutMillis: 2000 });
-  try { await admin.connect(); } catch { return; }
+  // Where a database is promised (CI), not reaching it is a failure, not a reason to skip.
+  try { await admin.connect(); } catch (e) { if (process.env.FDEGYM_TEST_REQUIRE_DB) throw e; return; }
   reachable = true;
   await admin.query(`CREATE DATABASE ${NAME}`);
   await admin.end();

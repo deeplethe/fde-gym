@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    # dev as well as main: a pull request can read only the caches of its own branch, its base and
+    # the default branch, and what was merged into dev should be run once as merged.
+    branches: [main, dev]
+  pull_request:
+
+# Read-only, said here so that it does not follow whatever the repository's default becomes.
+permissions:
+  contents: read
+
+jobs:
+  # The site (app/): types, the server's tests, and the build. Branch protection asks for this job
+  # by name, so the name stays.
+  app:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    services:
+      # The tests that touch the records make databases of their own on this server.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fdegym
+          POSTGRES_PASSWORD: fdegym
+          POSTGRES_DB: fdegym
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      # The version comes from packageManager in app/package.json; the action looks in the
+      # repository root unless told where.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: app/package.json
+      # The coding agent (pi) needs Node 22.19 or later, and the image runs 22.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Types
+        run: pnpm typecheck
+      - name: Tests
+        run: pnpm test
+        # With a database promised, a test that cannot reach it fails; it does not skip and show green.
+        env:
+          FDEGYM_TEST_REQUIRE_DB: "1"
+      - name: Build
+        run: pnpm build
+
+  # The harness and the scripts are standard library only and promise Python 3.9: they have to load on it.
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Compiles on Python 3.9
+        run: python -m compileall -q harness scripts
+      - name: Starts
+        run: python harness/run.py --version
