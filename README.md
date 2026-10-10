@@ -1,3 +1,5 @@
+![FDE Gym, the online judge for the new era: you need practice solving real problems](docs/images/promo.png)
+
 # FDE Gym
 
 The online judge for the new era: beyond code, end to end. [简体中文](README.zh-CN.md)
