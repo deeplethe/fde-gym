@@ -326,3 +326,98 @@ test('a turn nobody is following can still be let go of', async (t) => {
   assert.equal(await agent.agentBusy(id), false);
   assert.equal(await agent.stopAgent(id, r), false);
 });
+
+test('a turn as pages follow it: numbered from the start, pieces told together, heard again from any point', async (t) => {
+  if (!reachable) return t.skip('no local PostgreSQL');
+  const id = await newRun();
+  reply = () => ({ text: 'ok', usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } });
+  let go!: () => void;
+  const gate = new Promise<void>((ok) => { go = ok; });
+  const { r } = runner(async (turn, say) => {
+    say({ t: 'think', text: 'Let me ' });
+    say({ t: 'think', text: 'look.' });
+    say({ t: 'thought', text: 'Let me look.', ms: 1200 });
+    say({ t: 'delta', text: 'Look' });
+    say({ t: 'delta', text: 'ing.' });
+    say({ t: 'say', text: 'Looking.' });
+    say({ t: 'tool', id: 'a', name: 'bash', args: {}, at: 900 });
+    say({ t: 'args', id: 'a', args: { command: 'ls' }, at: 1000 });
+    say({ t: 'result', id: 'a', output: 'TASK.md\n', failed: false, at: 1450 });
+    // A model call: the pages are told what the run has spent.
+    await (await call(turn, { ...ask, stream: false })).text();
+    await gate;
+    say({ t: 'say', text: 'One file.', stop: 'stop' });
+  });
+  const { turn, outcome } = await agent.startAgentTurn(id, r, 'what is here?');
+  assert.equal(agent.liveTurn(id)?.turn, turn);
+  const heard: import('../agent').LiveEvent[] = [];
+  const following = agent.followTurn(id, turn, 0, (e) => heard.push(e));
+  assert.ok(following && !following.over);
+  for (let i = 0; i < 100 && !heard.some((e) => e.event === 'spend'); i++) await new Promise((ok) => setTimeout(ok, 20));
+  // Someone else asking for another turn of the run, or for none in particular, from part-way.
+  assert.equal(agent.followTurn(id, 'not-this-one', 0, () => undefined), undefined);
+  const late: import('../agent').LiveEvent[] = [];
+  agent.followTurn(id, undefined, 4, (e) => late.push(e))!.stop();
+  assert.deepEqual(late.map((e) => e.seq), heard.filter((e) => e.seq > 4).map((e) => e.seq));
+  go();
+  assert.equal((await outcome).end, 'answered');
+  assert.deepEqual(heard.map((e) => e.event), ['item', 'think', 'item', 'delta', 'item', 'item', 'args', 'result', 'spend', 'item', 'done']);
+  assert.deepEqual(heard.map((e) => e.seq), heard.map((_e, i) => i + 1));
+  assert.deepEqual(heard[0].data, { kind: 'user', text: 'what is here?' });
+  assert.deepEqual(heard[1].data, { text: 'Let me look.' });
+  assert.deepEqual(heard[3].data, { text: 'Looking.' });
+  // How long the command ran: from when it was called with its whole arguments to when it came back.
+  assert.deepEqual(heard[7].data, { id: 'a', output: 'TASK.md\n', failed: false, ms: 450 });
+  assert.equal(Math.round((heard[8].data as { usd: number }).usd * 1000), 1);
+  // Over: no longer under way, still to be heard whole for a while, and nothing more to come.
+  assert.equal(agent.liveTurn(id), undefined);
+  const after: import('../agent').LiveEvent[] = [];
+  assert.equal(agent.followTurn(id, turn, 0, (e) => after.push(e))?.over, true);
+  assert.equal(after.length, heard.length);
+  assert.deepEqual(await agent.agentTranscript(id), [
+    { kind: 'user', text: 'what is here?' },
+    { kind: 'thought', text: 'Let me look.', ms: 1200 },
+    { kind: 'assistant', text: 'Looking.' },
+    { kind: 'tool', id: 'a', name: 'bash', args: { command: 'ls' }, output: 'TASK.md\n', failed: false, ms: 450 },
+    { kind: 'assistant', text: 'One file.' },
+  ]);
+});
+
+test('a turn that fails is told as an error at its end', async (t) => {
+  if (!reachable) return t.skip('no local PostgreSQL');
+  const id = await newRun();
+  const { r } = runner(async (_turn, say) => {
+    say({ t: 'say', text: '', stop: 'error', error: 'overloaded' });
+    say({ t: 'retry', message: 'overloaded' });
+    say({ t: 'say', text: '', stop: 'error', error: 'overloaded' });
+  });
+  const { turn, outcome } = await agent.startAgentTurn(id, r, 'hi');
+  await assert.rejects(outcome, /模型服务调用失败/);
+  const heard: import('../agent').LiveEvent[] = [];
+  agent.followTurn(id, turn, 0, (e) => heard.push(e));
+  assert.deepEqual(heard.map((e) => e.event), ['item', 'retry', 'error']);
+  assert.deepEqual(heard[1].data, { message: 'overloaded' });
+});
+
+test('thinking is asked for where the provider\'s way is known, and as an admin says', async (t) => {
+  if (!reachable) return t.skip('no local PostgreSQL');
+  const { thinkingFor } = await import('../agent-settings');
+  assert.deepEqual(thinkingFor('https://openrouter.ai/api/v1'), { level: 'medium', format: 'openrouter' });
+  assert.deepEqual(thinkingFor('https://api.deepseek.com/v1'), { level: 'medium', format: 'deepseek' });
+  assert.equal(thinkingFor('https://llm.example.com/v1'), undefined);
+  assert.deepEqual(thinkingFor('https://llm.example.com/v1', 'high'), { level: 'high', format: 'openai' });
+  assert.equal(thinkingFor('https://openrouter.ai/api/v1', 'off'), undefined);
+});
+
+test('a provider that refuses the turn for good says why: out of credit, the key refused, too many requests', async (t) => {
+  if (!reachable) return t.skip('no local PostgreSQL');
+  const id = await newRun();
+  const { r } = runner(async (_turn, say) => {
+    say({ t: 'say', text: '', stop: 'error', error: '402: {"message":"Insufficient credits"}' });
+  });
+  await assert.rejects(agent.agentTurn(id, r, 'hi', () => undefined), /余额不足/);
+  assert.match(agent.failureText('401 Unauthorized'), /不接受本站的密钥/);
+  assert.match(agent.failureText('429: rate limited'), /请求太多/);
+  assert.match(agent.failureText('overloaded'), /调用失败/);
+  assert.match(agent.failureText(undefined), /调用失败/);
+});

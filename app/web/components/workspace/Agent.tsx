@@ -1,91 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentItem } from '../../../server/agent';
-import { api, postEvents } from '@/lib/client';
+import { useLiveTurn, type LiveTurn, type TurnEnd } from '@/lib/agent-stream';
+import { api } from '@/lib/client';
 import { L, type Lang } from '@/lib/i18n';
 import { Markdown } from '../Markdown';
+import { ThoughtStep, TurnStatus, Work, type Step } from './AgentSteps';
 
 import type { View } from './types';
-
-type Tool = Extract<AgentItem, { kind: 'tool' }>;
-/** What the agent does on the way to an answer: the tools it uses, and what it says between them. */
-type Step = Exclude<AgentItem, { kind: 'user' }>;
-const s = (v: unknown) => (typeof v === 'string' ? v : '');
-/** A tool call that came back with an error, was refused, or ran a command that exited non-zero. (Conversations from before the agent was pi carry no flag; their output says it.) */
-const stepFailed = (item: Tool) => item.failed ?? (!!item.output && (/^error:|^Not run:/.test(item.output) || /\[exit (?!0\])[^\]]+\]\s*$/.test(item.output)));
-
-/** One line for what a tool call does; the full output opens underneath. */
-function ToolStep({ item, lang, running }: { item: Tool; lang: Lang; running: boolean }) {
-  const [open, setOpen] = useState(false);
-  const a = item.args;
-  // pi's tools (bash, read, write, edit); the longer names are the earlier agent's, in older conversations.
-  const kind = ({ bash: 'run', run_command: 'run', read: 'read', read_file: 'read', write: 'write', write_file: 'write', edit: 'edit', edit_file: 'edit', list_files: 'list' } as Record<string, string>)[item.name];
-  const [verb, what] =
-    kind === 'run' ? ['$', s(a.command)]
-    : kind === 'read' ? [L(lang, '读', 'read'), s(a.path) + (a.offset ? `:${a.offset}` : '')]
-    : kind === 'write' ? [L(lang, '写', 'write'), s(a.path)]
-    : kind === 'edit' ? [L(lang, '改', 'edit'), s(a.path)]
-    : kind === 'list' ? [L(lang, '列出文件', 'list files'), '']
-    : [item.name, ''];
-  const failed = stepFailed(item);
-  // An edit is one replacement or several: what goes out, then what comes in.
-  const edits = Array.isArray(a.edits) ? a.edits as Record<string, unknown>[] : [{ oldText: a.old_text ?? a.oldText, newText: a.new_text ?? a.newText }];
-  const detail = kind === 'edit' ? `${edits.map((e) => `- ${s(e.oldText)}\n+ ${s(e.newText)}`).join('\n\n')}\n\n${item.output ?? ''}`
-    : kind === 'write' ? `${s(a.content)}\n\n${item.output ?? ''}` : item.output ?? item.partial ?? '';
-  return (
-    <div className="font-mono text-xs">
-      <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-start gap-2 rounded-md px-2 py-1 text-left hover:bg-fill-4">
-        {/* A word (读, write) is set in the page's own face; only the prompt sign and what follows are code. */}
-        <span className={`shrink-0 ${verb === '$' ? '' : 'font-sans'} ${failed ? 'text-bad' : 'text-label-3'}`}>{verb}</span>
-        <span className={`min-w-0 flex-1 ${open ? 'break-all whitespace-pre-wrap' : 'truncate'} text-label-2`}>{what}</span>
-        {running && item.output === undefined
-          ? <span className="size-3 shrink-0 animate-spin rounded-full border border-fill-1 border-t-label-3" />
-          : <Chevron open={open} />}
-      </button>
-      {open && detail && <pre className="mx-2 mt-1 mb-2 max-h-72 overflow-auto rounded-md bg-fill-4 px-3 py-2 break-all whitespace-pre-wrap text-label-2">{detail}</pre>}
-    </div>
-  );
-}
-
-const Chevron = ({ open }: { open: boolean }) => (
-  <svg viewBox="0 0 12 12" aria-hidden className={`mt-0.5 size-3 shrink-0 text-label-4 transition-transform ${open ? 'rotate-90' : ''}`}><path d="M4.5 3 7.5 6 4.5 9" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-);
-
-const one = (it: Step, lang: Lang, running: boolean, key: string | number) => (
-  it.kind === 'tool' ? <ToolStep key={key} item={it} lang={lang} running={running} />
-  // What it says on the way is part of the work, so it is set quieter than an answer.
-  : <p key={key} className="px-2 py-1 text-xs leading-relaxed whitespace-pre-wrap text-label-2">{it.text}</p>
-);
-
-/**
- * The work of one turn, folded. A turn can take a dozen steps, and the learner wants the answer,
- * not the scroll: so the steps are one line that says how many there were (and whether any went
- * wrong), which opens to all of them. While the turn is still going, the step it is on now stays
- * in view under that line.
- */
-function Work({ steps, live, lang }: { steps: Step[]; live: boolean; lang: Lang }) {
-  const [open, setOpen] = useState(false);
-  if (!steps.length) return null;
-  // The step being done now is shown whatever happens; the ones before it are what folds.
-  const now = live ? steps[steps.length - 1] : undefined;
-  const past = live ? steps.slice(0, -1) : steps;
-  const failed = past.filter((x) => x.kind === 'tool' && stepFailed(x)).length;
-  const n = past.filter((x) => x.kind === 'tool').length;
-  return (
-    <div>
-      {past.length > 0 && n > 0 && (
-        <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs text-label-3 hover:bg-fill-4 hover:text-label-2">
-          <Chevron open={open} />
-          <span>{live ? L(lang, `已做 ${n} 步`, `${n} step${n === 1 ? '' : 's'} so far`) : L(lang, `${n} 步操作`, `${n} step${n === 1 ? '' : 's'}`)}</span>
-          {failed > 0 && <span className="text-bad">{L(lang, `· ${failed} 步出错`, `· ${failed} failed`)}</span>}
-        </button>
-      )}
-      {/* With no tool among them there is nothing to fold: what was said is simply shown. */}
-      {(open || n === 0) && past.length > 0 && <div className={n > 0 ? 'mt-0.5 ml-2 border-l border-divider pl-1.5' : ''}>{past.map((it, i) => one(it, lang, false, i))}</div>}
-      {now && one(now, lang, true, 'now')}
-    </div>
-  );
-}
 
 /**
  * What was said since the last message from the learner, split into the work and the answer. The
@@ -173,112 +94,119 @@ function Usage({ spend, maxUsd, window: size, model, lang }: { spend: View['agen
   );
 }
 
+type AgentState = { items: AgentItem[]; busy: boolean; live?: { turn: string; startedAt: number }; now: number };
+
 /**
  * The coding agent: the learner says what they want, the agent works in the workspace and reports
  * back. What it did on the way is folded into one line per turn (see Work); each tool it used is one
- * line in there that opens to its output.
+ * line in there that opens to its output. A turn under way is followed as it happens, whichever page
+ * started it: the page reads the conversation, then hears the turn from its start (see useLiveTurn),
+ * and picks the stream up again where it left off if the line drops.
  */
 export function Agent({ runId, view, lang, onChanged }: { runId: string; view: View; lang: Lang; onChanged: () => void }) {
   const [items, setItems] = useState<AgentItem[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(view.agent.busy);
+  // The message just sent, until the turn it begins is under way.
+  const [sending, setSending] = useState<string>();
   const [stopping, setStopping] = useState(false);
   const [note, setNote] = useState<string>();
   const [error, setError] = useState<string>();
-  // What the agent is saying right now, as it comes; replaced by the finished piece when that arrives.
-  const [saying, setSaying] = useState('');
-  // What the agent has cost this run so far; a turn's end brings the new figure.
+  // What the agent has cost this run so far; each model call brings the new figure.
   const [spend, setSpend] = useState(view.agent.spend);
   useEffect(() => { setSpend(view.agent.spend); }, [view.agent.spend.usd, view.agent.spend.context]); // eslint-disable-line react-hooks/exhaustive-deps
   const end = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
-  // The turn this page started and is listening to, if there is one.
-  const stream = useRef<AbortController>(undefined);
+  // The turn being followed, by its id.
+  const following = useRef<string>(undefined);
 
-  /** Take the conversation, and whether a turn is under way, from the server. Not while this page is listening to one. */
+  const ended = useRef<(how: TurnEnd, turn: LiveTurn) => void>(() => undefined);
+  const { live, follow, clear } = useLiveTurn(runId, (how, turn) => ended.current(how, turn));
+
+  /** Take the conversation, and the turn under way if there is one, from the server; follow that turn if it is not followed yet. */
   const sync = useCallback(async () => {
-    const d = await api<{ items: AgentItem[]; busy: boolean }>(`/api/sessions/${runId}/agent`);
-    if (stream.current) return true;
-    setItems(d.items); setBusy(d.busy); setSaying('');
-    return d.busy;
-  }, [runId]);
+    const d = await api<AgentState>(`/api/sessions/${runId}/agent`);
+    setItems(d.items); setBusy(d.busy);
+    if (d.live) {
+      if (following.current !== d.live.turn) {
+        following.current = d.live.turn;
+        const skew = d.now - Date.now();
+        follow(d.live.turn, '', d.live.startedAt - skew, skew);
+      }
+    // A turn being followed is let go of when it says it has ended (or its stream is given up), not
+    // here: an answer that set out before the turn began would say there is none.
+    } else if (!following.current) clear();
+    return d;
+  }, [runId, follow, clear]);
   useEffect(() => { void sync().catch(() => undefined); }, [sync]);
-  // A turn this page is not listening to (the page was reloaded, the turn was started in another
-  // tab, or the line to the site dropped while it was going) is followed by asking, or the panel
-  // would say "working" for ever. Asking goes on while the site cannot be reached: it may be restarting.
-  const [lost, setLost] = useState(0);
+
+  ended.current = (how, turn) => {
+    following.current = undefined;
+    if ('end' in how) {
+      if (how.spend ?? turn.spend) setSpend((how.spend ?? turn.spend)!);
+      setNote(({
+        stopped: L(lang, '已停止。', 'Stopped.'),
+        steps: L(lang, '这一轮的步数用完了。说“继续”可以接着做。', 'Out of steps for this turn. Say “continue” to carry on.'),
+        budget: L(lang, '这次练习的助手用量已达上限。', 'This run has used up its allowance for the agent.'),
+      } as Record<string, string>)[how.end]);
+    } else if ('error' in how) setError(how.error);
+    // The record now holds the whole turn: read it, and let go of the turn as followed (see sync).
+    void sync().then((d) => { if (!d.busy) field.current?.focus(); }).catch(() => undefined);
+    onChanged();
+  };
+
+  // A turn under way that this site is not following yet (it is taking it up again from the runner),
+  // or a site that cannot be reached for now: asked after until there is a turn to follow, or none.
   useEffect(() => {
-    if (!busy || stream.current) return;
-    const t = setInterval(() => { void sync().then((still) => { if (!still) onChanged(); }).catch(() => undefined); }, 1500);
+    if (!busy || live || sending) return;
+    const t = setInterval(() => { void sync().then((d) => { if (!d.busy) onChanged(); }).catch(() => undefined); }, 1500);
     return () => clearInterval(t);
-  }, [busy, sync, onChanged, lost]);
+  }, [busy, live, sending, sync, onChanged]);
   useEffect(() => { if (!busy) setStopping(false); }, [busy]);
-  useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [items, busy, saying]);
+  useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [items, live, sending]);
+  // Each figure the turn brings, as it comes; and each tool that comes back may have changed files.
+  useEffect(() => { if (live?.spend) setSpend(live.spend); }, [live?.spend]);
+  const back = live?.items.filter((it) => it.kind === 'tool' && it.output !== undefined).length ?? 0;
+  useEffect(() => { if (back) onChanged(); }, [back, onChanged]);
 
   async function send() {
     const message = draft.trim();
     if (!message || busy) return;
-    const mine = stream.current = new AbortController();
-    setDraft(''); setBusy(true); setError(undefined); setNote(undefined);
-    setItems((x) => [...x, { kind: 'user', text: message }]);
-    // Whether the turn was heard to its end. If the line drops first, pi may well still be at work.
-    let heard = false;
+    setDraft(''); setBusy(true); setError(undefined); setNote(undefined); setSending(message);
     try {
-      await postEvents(`/api/sessions/${runId}/agent`, { message }, (event, data) => {
-        if (event === 'item') { setSaying(''); setItems((x) => [...x, data as AgentItem]); }
-        else if (event === 'delta') setSaying((x) => x + data.text);
-        else if (event === 'args') setItems((x) => x.map((it) => (it.kind === 'tool' && it.id === data.id ? { ...it, args: data.args } : it)));
-        else if (event === 'output') setItems((x) => x.map((it) => (it.kind === 'tool' && it.id === data.id ? { ...it, partial: data.output } : it)));
-        else if (event === 'result') {
-          setItems((x) => x.map((it) => (it.kind === 'tool' && it.id === data.id ? { ...it, output: data.output, failed: data.failed } : it)));
-          onChanged(); // a tool may have changed files
-        } else if (event === 'done') {
-          heard = data.end !== 'detached';
-          if (data.spend) setSpend(data.spend);
-          setNote(({
-            stopped: L(lang, '已停止。', 'Stopped.'),
-            steps: L(lang, '这一轮的步数用完了。说“继续”可以接着做。', 'Out of steps for this turn. Say “continue” to carry on.'),
-            budget: L(lang, '这次练习的助手用量已达上限。', 'This run has used up its allowance for the agent.'),
-          } as Record<string, string>)[data.end]);
-        } else if (event === 'error') { heard = true; setError(data.error); }
-      }, mine.signal);
+      const r = await api<{ turn: string; now: number }>(`/api/sessions/${runId}/agent`, { method: 'POST', json: { message } });
+      following.current = r.turn;
+      follow(r.turn, message, Date.now(), r.now - Date.now());
     } catch (e) {
-      // Refused outright (the server answered with an error) or let go of here: that is the end of it. A line that broke is not.
-      if (mine.signal.aborted) heard = true;
-      else if (!(e instanceof TypeError)) { heard = true; setError((e as Error).message); }
+      setError((e as Error).message);
+      // Refused, or the answer was lost on the way: the record says which.
+      await sync().catch(() => setBusy(false));
+    } finally {
+      setSending(undefined);
     }
-    if (stream.current === mine) stream.current = undefined;
-    setSaying('');
-    onChanged();
-    if (!heard && !mine.signal.aborted) {
-      // Still "working" as far as this page knows; from here the turn is followed by asking (see above).
-      setLost((n) => n + 1);
-      return;
-    }
-    setBusy(false);
-    field.current?.focus();
   }
 
   async function stop() {
     setStopping(true);
     const r = await api<{ stopped: boolean }>(`/api/sessions/${runId}/agent/stop`, { method: 'POST' }).catch(() => undefined);
-    // Listening to a turn the server no longer has (it was restarted under us): let go of it.
-    if (r && !r.stopped) { stream.current?.abort(); stream.current = undefined; }
-    if (!stream.current) {
+    // Nothing to stop (the turn had already ended, or the server no longer has it): read where things stand.
+    if (r && !r.stopped) {
       await sync().catch(() => undefined);
-      if (r?.stopped) setNote(L(lang, '已停止。', 'Stopped.'));
       onChanged();
     }
-    // Otherwise the turn says so itself when it has ended (see the effect on busy).
+    // Otherwise the turn says so itself when it has ended.
     if (!r) setStopping(false);
   }
 
+  const working = busy || !!live || !!sending;
+  const shown: AgentItem[] = live ? [...items, { kind: 'user', text: live.user }, ...live.items] : sending ? [...items, { kind: 'user', text: sending }] : items;
+  const all = turns(shown, working);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* The conversation keeps to a column a line of text is comfortable in, however wide the panel is. */}
       <div className="min-h-0 flex-1 overflow-y-auto">
        <div className="mx-auto w-full max-w-[720px] space-y-2 px-3 py-3">
-        {!items.length && (
+        {!shown.length && (
           <div className="mx-auto max-w-xl px-2 py-4 text-[13px] leading-relaxed text-label-3">
             <p>{L(lang, '这是你的 coding agent。告诉它要做什么，它会在工作区里读文件、跑命令、改代码，然后向你汇报。', 'This is your coding agent. Tell it what to do; it reads files, runs commands and edits code in the workspace, then reports back.')}</p>
             <p className="mt-2">{L(lang, '它不能替你去问客户方的人，也不能启动试运行：这两件事在右边，由你决定。', 'It cannot contact the customer’s people or start a trial run for you: those are on the right, and they are your call.')}</p>
@@ -290,15 +218,20 @@ export function Agent({ runId, view, lang, onChanged }: { runId: string; view: V
             </p>
           </div>
         )}
-        {turns(items, busy).map((t, i) => (
-          <div key={i} className="space-y-2">
-            {t.user !== undefined && <p className="ml-auto w-fit max-w-[85%] rounded-2xl bg-fill-3 px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap">{t.user}</p>}
-            <Work steps={t.steps} live={t.live} lang={lang} />
-            {t.answer.map((text, k) => <div key={k} className="px-2 text-[13px]"><Markdown>{text}</Markdown></div>)}
-          </div>
-        ))}
-        {busy && saying.trim() && <div className="px-2 text-[13px]"><Markdown>{saying}</Markdown></div>}
-        {busy && <p className="flex items-center gap-2 px-2 text-xs text-label-3"><span className="size-3 animate-spin rounded-full border border-fill-1 border-t-label-3" />{L(lang, '在做……', 'Working…')}</p>}
+        {all.map((t, i) => {
+          const now = t.live && live ? live : undefined;
+          return (
+            <div key={i} className="space-y-2">
+              {t.user && <p className="ml-auto w-fit max-w-[85%] rounded-2xl bg-fill-3 px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap">{t.user}</p>}
+              <Work steps={t.steps} live={t.live && !now?.thinking} lang={lang} drafting={now?.drafting} />
+              {now?.thinking && <ThoughtStep text={now.thinking.text} lang={lang} since={now.thinking.since} />}
+              {t.answer.map((text, k) => <div key={k} className="px-2 text-[13px]"><Markdown>{text}</Markdown></div>)}
+              {now && now.saying.trim() && <div className="px-2 text-[13px]"><Markdown>{now.saying}</Markdown></div>}
+            </div>
+          );
+        })}
+        {live ? <TurnStatus live={live} lang={lang} />
+          : working && <p className="flex items-center gap-2 px-2 text-xs text-label-3"><span className="size-3 animate-spin rounded-full border border-fill-1 border-t-label-3" />{L(lang, '在做……', 'Working…')}</p>}
         {note && <p className="px-2 text-xs text-label-3">{note}</p>}
         {error && <p className="rounded-md bg-bad/10 px-3 py-2 text-xs text-bad">{error}</p>}
         {/* Room under the last thing said, so that it stands clear of the box instead of sitting on it. */}
@@ -309,11 +242,11 @@ export function Agent({ runId, view, lang, onChanged }: { runId: string; view: V
        <div className="mx-auto w-full max-w-[720px]">
         {/* The box and, in its corner, the one thing to do with it: send (an arrow up), or stop while a turn is going. */}
         <div className="relative">
-          <textarea ref={field} value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} disabled={busy}
+          <textarea ref={field} value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} disabled={working}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }}
             placeholder={L(lang, '告诉 agent 要做什么……', 'Tell the agent what to do…')} className="field block resize-none pr-12 text-[13px]" />
-          {busy ? (
-            <button type="button" disabled={stopping} onClick={() => void stop()} title={stopping ? L(lang, '正在停止……', 'Stopping…') : L(lang, '停止', 'Stop')} aria-label={L(lang, '停止', 'Stop')}
+          {working ? (
+            <button type="button" disabled={stopping || !!sending} onClick={() => void stop()} title={stopping ? L(lang, '正在停止……', 'Stopping…') : L(lang, '停止', 'Stop')} aria-label={L(lang, '停止', 'Stop')}
               className="btn btn-secondary absolute right-2 bottom-2 grid size-8 place-items-center disabled:opacity-50">
               <span className={`size-2.5 rounded-[2px] bg-current ${stopping ? 'animate-pulse' : ''}`} />
             </button>

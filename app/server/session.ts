@@ -15,7 +15,7 @@
  * page can show each conversation again.
  */
 import { randomBytes } from 'node:crypto';
-import { agentBusy, agentSpend, agentTranscript, agentTurn, agentTurnLog, stopAgent, type AgentEvent } from './agent';
+import { agentBusy, agentSpend, agentTranscript, agentTurnLog, followTurn, liveTurn, startAgentTurn, stopAgent, type LiveEvent } from './agent';
 import { agentAvailable, agentConfig, contextWindow } from './agent-settings';
 import { BRIEF, catalog, type Catalog, type CaseRecord } from './catalog';
 import { db, json, text } from './db';
@@ -396,10 +396,25 @@ export class Session {
 
   // ---- the coding agent
 
-  /** What has been said so far, and whether a turn is under way (a page that did not start it follows it by asking). */
-  async agentState() { return { items: await agentTranscript(this.runId), busy: await agentBusy(this.runId) }; }
+  /**
+   * What has been said so far, and whether a turn is under way. While this site follows the turn
+   * (`live`), what it has said is left out: a page hears all of it from the turn itself
+   * (followTurn), from the start. A turn under way that is not live yet is followed by asking again.
+   */
+  async agentState() {
+    const items = await agentTranscript(this.runId);
+    const busy = await agentBusy(this.runId);
+    const live = busy ? liveTurn(this.runId) : undefined;
+    // The turn begins with the learner's message, the last one in the record.
+    const from = live ? items.findLastIndex((it) => it.kind === 'user') : -1;
+    return { items: from >= 0 ? items.slice(0, from) : items, busy, live: from >= 0 ? live : undefined, now: Date.now() };
+  }
 
-  async agentTurn(text: string, emit: (e: AgentEvent) => void) {
+  /** Hear the turn under way (see ./agent followTurn). */
+  followTurn(turn: string | undefined, after: number, on: (e: LiveEvent) => void) { return followTurn(this.runId, turn, after, on); }
+
+  /** Begin a turn of the agent; it is followed by its id (see agentState). */
+  async startAgentTurn(text: string) {
     this.requireOpen();
     text = text.trim();
     if (!text) throw new SessionError('消息不能为空');
@@ -408,7 +423,7 @@ export class Session {
     if (runner.info.execMode === 'off') throw new SessionError('本站没有开放助手');
     // The delivered system may call the run's LLM gateway and customer services while the agent tries it out.
     await runner.ensureServing(this.runId).catch(() => undefined);
-    return agentTurn(this.runId, runner, text, emit);
+    return startAgentTurn(this.runId, runner, text);
   }
 
   async stopAgent() { return { stopped: await stopAgent(this.runId, online(this.row.runner)) }; }

@@ -28,6 +28,15 @@ export const AGENT_READY = existsSync(PI_CLI);
 const TURN_TIMEOUT_MS = Number(process.env.FDEGYM_AGENT_TURN_S ?? 1800) * 1000;
 const MAX_OUTPUT = 12_000;
 const MAX_ARG = 20_000;
+const MAX_THOUGHT = 20_000;
+const MAX_PATCH = 32_000;
+/** How often the page hears how far a long tool call has been written. */
+const DRAFT_MS = 1000;
+
+/** How hard the model thinks before it answers, and how the relay's provider is asked for it. */
+export const THINKING_LEVELS = ['low', 'medium', 'high'] as const;
+export const THINKING_FORMATS = ['openrouter', 'deepseek', 'openai'] as const;
+export type Thinking = { level: (typeof THINKING_LEVELS)[number]; format: (typeof THINKING_FORMATS)[number] };
 
 /** What the site hands over for one turn. */
 export interface AgentTurn {
@@ -40,26 +49,38 @@ export interface AgentTurn {
   system: string;
   contextWindow?: number;
   maxTokens?: number;
+  /** Absent: the model is not asked to think (what it thinks of its own accord is still passed on). */
+  thinking?: Thinking;
 }
 
 /**
  * What comes back while a turn runs, one JSON object per line: pi's own events, cut down to what
  * the page shows. On the way each is numbered (`n`, from 1 in a turn), so that a site which lost
- * its connection and takes the turn up again (agentAttach) can tell what it already has.
+ * its connection and takes the turn up again (agentAttach) can tell what it already has, and
+ * stamped with the time (`at`, on this machine's clock) so that how long a step took can be said.
  */
-export type AgentLine = { n?: number } & AgentWhat;
+export type AgentLine = { n?: number; at?: number } & AgentWhat;
 type AgentWhat =
   | { t: 'delta'; text: string }
   | { t: 'say'; text: string; stop?: string; error?: string }
+  /** A piece of what the model is thinking, as it comes. */
+  | { t: 'think'; text: string }
+  /** A stretch of thinking, finished: all of it, and how long it took. Empty when the provider keeps it to itself. */
+  | { t: 'thought'; text: string; ms: number }
   /** A tool call has begun to be written: its name is known, its arguments not yet. */
   | { t: 'tool'; id: string; name: string; args: Record<string, unknown> }
+  /** How much of a tool call's arguments has been written so far: a long file can take a minute. */
+  | { t: 'drafting'; id: string; chars: number }
   /** What is known of its arguments so far (the path or command first, everything once it is complete). */
   | { t: 'args'; id: string; args: Record<string, unknown> }
   /** What a running command has printed so far. */
   | { t: 'output'; id: string; output: string }
-  | { t: 'result'; id: string; output: string; failed: boolean }
+  /** `patch`: an edit's change to the file, as a unified diff. */
+  | { t: 'result'; id: string; output: string; failed: boolean; patch?: string }
   | { t: 'retry'; message: string }
   | { t: 'settled'; aborted: boolean };
+/** Lines that are only for watching live, and are neither kept nor told again. */
+const LIVE_ONLY = new Set<AgentWhat['t']>(['delta', 'output', 'think', 'drafting']);
 
 const GUARD = `// Written by FDE Gym for each turn. Asking the customer's people and starting a trial day are the engineer's to do.
 export default function (pi) {
@@ -74,19 +95,38 @@ export default function (pi) {
 const agentDir = (name: string) => join(runDir(name), 'agent');
 const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
 const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n * 0.6)}\n[… ${s.length - n} characters left out …]\n${s.slice(-n * 0.4)}`);
+/** A diff cut short keeps to whole lines, and says how many more there were. */
+const clipLines = (s: string, n: number) => {
+  if (s.length <= n) return s;
+  const cut = s.lastIndexOf('\n', n);
+  const kept = s.slice(0, cut > 0 ? cut : n);
+  return `${kept}\n... ${s.slice(kept.length).split('\n').length - 1} more lines`;
+};
 const textOf = (content: unknown) => (Array.isArray(content) ? content.filter((c) => c?.type === 'text').map((c) => String(c.text ?? '')).join('') : '');
+/** The turn's thinking, if it is one this machine knows how to ask for (it comes from the site, over the line). */
+const thinkingOf = (turn: AgentTurn): Thinking | undefined => {
+  const th = turn.thinking;
+  return th && (THINKING_LEVELS as readonly string[]).includes(th.level) && (THINKING_FORMATS as readonly string[]).includes(th.format) ? th : undefined;
+};
 
 /** The folder pi keeps its session and settings in, made ready for this turn: where the model is, and the guard. */
 function prepare(name: string, turn: AgentTurn): string {
   const dir = agentDir(name);
   mkdirSync(join(dir, 'sessions'), { recursive: true });
+  const th = thinkingOf(turn);
   writeFileSync(join(dir, 'models.json'), JSON.stringify({
     providers: {
       fdegym: {
         baseUrl: turn.url, api: 'openai-completions', apiKey: turn.token,
-        // The relay speaks plain chat completions, whatever is behind it.
-        compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, supportsStore: false, maxTokensField: 'max_tokens' },
-        models: [{ id: turn.model, contextWindow: turn.contextWindow ?? 128_000, maxTokens: turn.maxTokens ?? 8000 }],
+        // The relay speaks plain chat completions, whatever is behind it; how thinking is asked for is the provider's way, which the site knows.
+        compat: {
+          supportsDeveloperRole: false, supportsReasoningEffort: th?.format === 'openai', supportsStore: false, maxTokensField: 'max_tokens',
+          ...(th ? { thinkingFormat: th.format } : {}),
+          // DeepSeek refuses a conversation whose earlier replies come back without their reasoning_content.
+          ...(th?.format === 'deepseek' ? { requiresReasoningContentOnAssistantMessages: true } : {}),
+        },
+        // Thinking counts against the reply's tokens, so a thinking model is given more room to answer in.
+        models: [{ id: turn.model, reasoning: !!th, contextWindow: turn.contextWindow ?? 128_000, maxTokens: turn.maxTokens ?? (th ? 16_000 : 8000) }],
       },
     },
   }), { mode: 0o600 });
@@ -141,7 +181,7 @@ export function agentTurn(name: string, turn: AgentTurn, onLine: (line: string) 
     '--no-extensions', '--no-mcp', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
     '-e', join(dir, 'guard.js'), '--tools', 'read,bash,edit,write',
     '--session-dir', sessions, ...(readdirSync(sessions).some((f) => f.endsWith('.jsonl')) ? ['--continue'] : []),
-    '--provider', 'fdegym', '--model', turn.model, '--append-system-prompt', turn.system,
+    '--provider', 'fdegym', '--model', turn.model, '--thinking', thinkingOf(turn)?.level ?? 'off', '--append-system-prompt', turn.system,
     // A message that begins with @ would be taken for a file to attach.
     '--', turn.message.startsWith('@') ? ` ${turn.message}` : turn.message,
   ];
@@ -159,8 +199,8 @@ export function agentTurn(name: string, turn: AgentTurn, onLine: (line: string) 
   const log: Log = { kept: [], bytes: 0, n: 0, to: onLine, end: new Promise((ok) => { ended = ok; }) };
   logs.set(name, log);
   const send = (l: AgentWhat) => {
-    const line = JSON.stringify({ ...l, n: ++log.n });
-    if (l.t !== 'delta' && l.t !== 'output' && log.bytes < LOG_BYTES) { log.kept.push(line); log.bytes += line.length; }
+    const line = JSON.stringify({ ...l, n: ++log.n, at: Date.now() });
+    if (!LIVE_ONLY.has(l.t) && log.bytes < LOG_BYTES) { log.kept.push(line); log.bytes += line.length; }
     log.to(line);
   };
   // pi is told the workspace's full path and likes to use it; the page shows paths from the workspace's root, as the file tree does.
@@ -171,30 +211,58 @@ export function agentTurn(name: string, turn: AgentTurn, onLine: (line: string) 
   // What it has said in the reply being written, not yet passed on as a finished piece.
   let said = '', passed = '';
   // Tool calls being written, by their place in the reply: the arguments arrive as pieces of JSON.
-  const writing = new Map<number, { id: string; json: string; named: boolean }>();
+  const writing = new Map<number, { id: string; json: string; named: boolean; chars: number; told: number }>();
   const begun = new Set<string>();
   const begin = (id: string, name: string) => { if (!begun.has(id)) { begun.add(id); send({ t: 'tool', id, name, args: {} }); } };
+  // Stretches of thinking under way, by their place in the reply: when each began, and what has come of it.
+  const thinking = new Map<number, { since: number; text: string }>();
+  const thought = (index: number, text?: string) => {
+    const th = thinking.get(index);
+    if (!th) return;
+    thinking.delete(index);
+    send({ t: 'thought', text: clip(text || th.text, MAX_THOUGHT), ms: Date.now() - th.since });
+  };
+  // Thinking is over once the model goes on to say something or to reach for a tool, whenever pi says so.
+  const thoughtOut = () => { for (const index of [...thinking.keys()]) thought(index); };
   let lastOutput = 0;
   const take = (raw: string) => {
     let e: Record<string, any>;
     try { e = JSON.parse(raw); } catch { return; }
     const u = e.type === 'message_update' ? e.assistantMessageEvent : undefined;
-    if (u?.type === 'text_delta') { said += String(u.delta ?? ''); send({ t: 'delta', text: String(u.delta ?? '') }); }
+    if (u?.type === 'text_delta') { thoughtOut(); said += String(u.delta ?? ''); send({ t: 'delta', text: String(u.delta ?? '') }); }
+    else if (u?.type === 'thinking_start') thinking.set(Number(u.contentIndex), { since: Date.now(), text: '' });
+    else if (u?.type === 'thinking_delta') {
+      const index = Number(u.contentIndex);
+      if (!thinking.has(index)) thinking.set(index, { since: Date.now(), text: '' });
+      thinking.get(index)!.text += String(u.delta ?? '');
+      send({ t: 'think', text: String(u.delta ?? '') });
+    } else if (u?.type === 'thinking_end') thought(Number(u.contentIndex), String(u.content ?? ''));
     else if (u?.type === 'toolcall_start' && u.id && u.toolName) {
+      thoughtOut();
       // What it said before reaching for a tool comes before the tool, on the page as in the reply.
       if (said.trim()) { send({ t: 'say', text: said }); passed += said; }
       said = '';
-      writing.set(Number(u.contentIndex), { id: String(u.id), json: '', named: false });
+      writing.set(Number(u.contentIndex), { id: String(u.id), json: '', named: false, chars: 0, told: Date.now() });
       begin(String(u.id), String(u.toolName));
     } else if (u?.type === 'toolcall_delta') {
       const w = writing.get(Number(u.contentIndex));
-      if (!w || w.named) return;
-      w.json += String(u.delta ?? '');
+      if (!w) return;
+      const piece = String(u.delta ?? '');
+      w.chars += piece.length;
+      if (Date.now() - w.told >= DRAFT_MS) { w.told = Date.now(); send({ t: 'drafting', id: w.id, chars: w.chars }); }
+      if (w.named) return;
+      w.json += piece;
       // Which file, or which command, as soon as that much has been written; a long file body can take a minute more.
       const m = /"(path|command)"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(w.json);
-      if (m) { w.named = true; try { send({ t: 'args', id: w.id, args: clipped({ [m[1]]: String(JSON.parse(m[2])) }) }); } catch { /* wait for the whole of it */ } }
+      if (m) { w.named = true; w.json = ''; try { send({ t: 'args', id: w.id, args: clipped({ [m[1]]: String(JSON.parse(m[2])) }) }); } catch { /* wait for the whole of it */ } }
     } else if (e.type === 'message_end' && e.message?.role === 'assistant') {
       writing.clear();
+      // Thinking the provider never said was over (the reply was cut off, or it does not say) ends with the reply.
+      const content: unknown[] = Array.isArray(e.message.content) ? e.message.content : [];
+      for (const index of [...thinking.keys()]) {
+        const block = content[index] as { type?: string; thinking?: string } | undefined;
+        thought(index, block?.type === 'thinking' ? String(block.thinking ?? '') : undefined);
+      }
       const whole = textOf(e.message.content);
       send({ t: 'say', text: whole.startsWith(passed) ? whole.slice(passed.length) : passed ? '' : whole, stop: e.message.stopReason, error: e.message.errorMessage });
       said = ''; passed = '';
@@ -207,7 +275,10 @@ export function agentTurn(name: string, turn: AgentTurn, onLine: (line: string) 
       lastOutput = now;
       const text = textOf(e.partialResult?.content);
       if (text) send({ t: 'output', id: String(e.toolCallId), output: tidy(text.slice(-4000)) });
-    } else if (e.type === 'tool_execution_end') send({ t: 'result', id: String(e.toolCallId), output: tidy(clip(textOf(e.result?.content), MAX_OUTPUT)), failed: !!e.isError });
+    } else if (e.type === 'tool_execution_end') {
+      const patch = typeof e.result?.details?.patch === 'string' && e.result.details.patch ? tidy(clipLines(e.result.details.patch, MAX_PATCH)) : undefined;
+      send({ t: 'result', id: String(e.toolCallId), output: tidy(clip(textOf(e.result?.content), MAX_OUTPUT)), failed: !!e.isError, ...(patch ? { patch } : {}) });
+    }
     else if (e.type === 'auto_retry_start') send({ t: 'retry', message: String(e.errorMessage ?? '') });
     else if (e.type === 'agent_settled') send({ t: 'settled', aborted: !!e.aborted });
   };

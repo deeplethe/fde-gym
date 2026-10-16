@@ -1,12 +1,14 @@
 /** The coding agent learners direct in the workspace: which model it is and what a run may spend. The site pays. */
 import { useEffect, useState } from 'react';
+import { Select } from '@/components/Select';
 import { Button, Card, Pill, SectionTitle } from '@/components/ui';
 import type { AdminApi } from '@/lib/admin';
 import { L, type Lang } from '@/lib/i18n';
 
-interface AgentView { enabled: boolean; baseUrl: string; model: string; proxy: string; maxSteps: number; maxUsd: number; hasKey: boolean; harnessKey: boolean }
-type Form = { enabled: boolean; baseUrl: string; model: string; proxy: string; maxSteps: string; maxUsd: string; key: string };
-const toForm = (v: AgentView): Form => ({ enabled: v.enabled, baseUrl: v.baseUrl, model: v.model, proxy: v.proxy, maxSteps: String(v.maxSteps), maxUsd: String(v.maxUsd), key: '' });
+interface AgentView { enabled: boolean; baseUrl: string; model: string; proxy: string; maxSteps: number; maxUsd: number; thinking?: Thinking; hasKey: boolean; harnessKey: boolean }
+type Thinking = 'auto' | 'off' | 'low' | 'medium' | 'high';
+type Form = { enabled: boolean; baseUrl: string; model: string; proxy: string; maxSteps: string; maxUsd: string; thinking: Thinking; key: string };
+const toForm = (v: AgentView): Form => ({ enabled: v.enabled, baseUrl: v.baseUrl, model: v.model, proxy: v.proxy, maxSteps: String(v.maxSteps), maxUsd: String(v.maxUsd), thinking: v.thinking ?? 'auto', key: '' });
 
 export function AdminAgent({ adminApi, lang }: { adminApi: AdminApi; lang: Lang }) {
   const [view, setView] = useState<AgentView>();
@@ -25,7 +27,7 @@ export function AdminAgent({ adminApi, lang }: { adminApi: AdminApi; lang: Lang 
     try {
       const next = await adminApi<AgentView>('/api/admin/settings/agent', {
         method: 'PUT',
-        json: { enabled: form.enabled, baseUrl: form.baseUrl, model: form.model, proxy: form.proxy, maxSteps: Number(form.maxSteps), maxUsd: Number(form.maxUsd), ...(clearKey ? { key: '' } : form.key ? { key: form.key } : {}) },
+        json: { enabled: form.enabled, baseUrl: form.baseUrl, model: form.model, proxy: form.proxy, maxSteps: Number(form.maxSteps), maxUsd: Number(form.maxUsd), thinking: form.thinking, ...(clearKey ? { key: '' } : form.key ? { key: form.key } : {}) },
       });
       setView(next); setForm(toForm(next)); setSaved(true);
     } catch (e) { setError((e as Error).message); }
@@ -83,6 +85,17 @@ export function AdminAgent({ adminApi, lang }: { adminApi: AdminApi; lang: Lang 
             <span className="field-label">{L(lang, '每次练习的花费上限（美元）', 'Spend per run (USD)')}</span>
             <input value={form.maxUsd} onChange={(e) => set({ maxUsd: e.target.value.replace(/[^\d.]/g, '') })} inputMode="decimal" className="field font-mono tabular-nums" />
           </label>
+          <div className="block sm:col-span-6">
+            <span id="agent-thinking" className="field-label">{L(lang, '思考', 'Thinking')}</span>
+            <Select aria-labelledby="agent-thinking" value={form.thinking} onChange={(v) => set({ thinking: v as Thinking })} options={[
+              { value: 'auto', label: L(lang, '自动', 'Automatic'), hint: L(lang, 'OpenRouter、DeepSeek 用“中”，其他接口不开', 'Medium on OpenRouter and DeepSeek, off elsewhere') },
+              { value: 'off', label: L(lang, '不要求思考', 'Not asked to think') },
+              { value: 'low', label: L(lang, '低', 'Low') },
+              { value: 'medium', label: L(lang, '中', 'Medium') },
+              { value: 'high', label: L(lang, '高', 'High'), hint: L(lang, '更慢、更贵', 'Slower and costlier') },
+            ]} />
+            <p className="mt-1.5 text-xs leading-relaxed text-label-3">{L(lang, '让模型先思考再动手；学员能在 agent 面板里展开看它想了什么。其他接口要求思考时会发 reasoning_effort，只有推理模型接受。', 'Has the model think before it acts; learners can open what it thought in the agent panel. Other endpoints are sent reasoning_effort, which only reasoning models accept.')}</p>
+          </div>
           <p className="text-xs leading-relaxed text-label-3 sm:col-span-6">
             {L(lang, '花费按接口返回的金额累计（OpenRouter 会返回）。接口不返回金额时这个上限不起作用，只有步数限制。', 'Spend is added up from what the endpoint reports (OpenRouter does). If the endpoint reports no cost, this cap does nothing and only the step limit applies.')}
           </p>

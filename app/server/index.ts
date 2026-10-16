@@ -192,22 +192,47 @@ app.post('/api/sessions/:id/exec/stop', async (c) => c.json(await (await mySessi
 app.get('/api/sessions/:id/agent', async (c) => c.json(await (await mySession(c)).agentState()));
 
 /**
- * Give the coding agent a message, streamed as server-sent events: `item` (what it says, and each
- * tool it uses), `result` ({ id, output } for a tool), then `done` ({ end, spend }) or `error`.
+ * Give the coding agent a message. Answers once the turn is under way, with its id ({ turn }); what
+ * happens is heard from /agent/events. A message that cannot be taken (the agent is busy, or the
+ * run's allowance is used up) is refused here, as an error.
  */
 app.post('/api/sessions/:id/agent', async (c) => {
   const b = await body<{ message: string }>(c);
   if (!b.message) throw new SessionError('消息不能为空');
+  const { turn, outcome } = await (await mySession(c)).startAgentTurn(b.message);
+  void outcome.catch((e) => { if (!(e instanceof SessionError)) console.error(e); });
+  return c.json({ turn, now: Date.now() });
+});
+
+/**
+ * A turn of the agent as it happens, as server-sent events, each with its number as its id: from
+ * the start, or from after `after` (or the Last-Event-ID a reconnecting EventSource sends): `item`,
+ * `delta`, `think`, `drafting`, `args`, `output`, `result`, `retry`, `spend`, each as { at, data }
+ * (`at` on the site's clock), ending with `done` ({ end, spend }) or `error` ({ error }). `gone`
+ * when the run has no such turn: read /agent again.
+ */
+app.get('/api/sessions/:id/agent/events', async (c) => {
   const session = await mySession(c);
   const lang = langOf(c);
+  const after = Number(c.req.header('last-event-id') ?? c.req.query('after') ?? 0) || 0;
+  const turn = c.req.query('turn') || undefined;
   return streamSSE(c, async (sse) => {
-    try {
-      const r = await session.agentTurn(b.message!, (e) => { void sse.writeSSE({ event: e.event, data: JSON.stringify(e.data) }); });
-      await sse.writeSSE({ event: 'done', data: JSON.stringify(r) });
-    } catch (e) {
-      if (!(e instanceof SessionError)) console.error(e);
-      await sse.writeSSE({ event: 'error', data: JSON.stringify({ error: errorText(e, lang) }) });
-    }
+    // Written one after another, in order; the stream ends with the turn, or when the page goes.
+    let writing: Promise<unknown> = Promise.resolve();
+    let ended!: () => void;
+    const over = new Promise<void>((ok) => { ended = ok; });
+    const write = (m: { id?: string; event: string; data: unknown }) => { writing = writing.then(() => sse.writeSSE({ ...m, data: JSON.stringify(m.data) })).catch(() => ended()); };
+    const following = session.followTurn(turn, after, (e) => {
+      const data = e.event === 'error' ? { error: translate(e.data.error, lang) } : e.data;
+      write({ id: String(e.seq), event: e.event, data: { at: e.at, data } });
+      if (e.event === 'done' || e.event === 'error') void writing.then(ended);
+    });
+    if (!following) { write({ event: 'gone', data: {} }); await writing; return; }
+    // Asked from after its end: nothing more is coming.
+    if (following.over) void writing.then(ended);
+    sse.onAbort(() => { following.stop(); ended(); });
+    const ping = setInterval(() => { writing = writing.then(() => sse.write(': ping\n\n')).catch(() => ended()); }, 15_000);
+    try { await over; } finally { clearInterval(ping); following.stop(); await writing; }
   });
 });
 

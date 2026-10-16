@@ -41,8 +41,8 @@ function newRun(): { name: string; ws: string } {
 const turn = (message: string): AgentTurn => ({ message, model: 'test/model', url: model.url, token: 'turn-token', system: 'You work in a test.' });
 async function run(name: string, message: string, onLine?: (l: AgentLine) => void) {
   const lines: AgentLine[] = [];
-  // Without the numbers the lines travel with; the test of taking a turn up again looks at those.
-  const r = await pi.agentTurn(name, turn(message), (raw) => { const { n: _n, ...l } = JSON.parse(raw) as AgentLine & { n?: number }; lines.push(l as AgentLine); onLine?.(l as AgentLine); });
+  // Without the numbers and times the lines travel with; the test of taking a turn up again looks at those.
+  const r = await pi.agentTurn(name, turn(message), (raw) => { const { n: _n, at: _at, ...l } = JSON.parse(raw) as AgentLine; lines.push(l as AgentLine); onLine?.(l as AgentLine); });
   return { ...r, lines };
 }
 const kinds = (lines: AgentLine[]) => lines.map((l) => l.t).filter((t, i, a) => t !== a[i - 1]);
@@ -171,4 +171,49 @@ test('a turn can be taken up again: told from the start while it runs, and after
   const third: AgentLine[] = [];
   assert.deepEqual(await pi.agentAttach(name, (raw) => third.push(JSON.parse(raw) as AgentLine)), end);
   assert.deepEqual(third.map((l) => l.n), whole.map((l) => l.n));
+});
+
+test('thinking: asked for the provider\'s way, told in pieces as it comes, then whole with how long it took, and only the whole kept', async () => {
+  const { name } = newRun();
+  play(() => ({ reasoning: 'They greet me. A greeting back will do.', text: 'Hello.' }));
+  const lines: AgentLine[] = [];
+  const before = model.seen.length;
+  const end = await pi.agentTurn(name, { ...turn('hi'), thinking: { level: 'high', format: 'openrouter' } }, (raw) => lines.push(JSON.parse(raw) as AgentLine));
+  assert.equal(end.code, 0, end.stderr);
+  assert.deepEqual(model.seen[before].body.reasoning, { effort: 'high' });
+  assert.deepEqual(kinds(lines), ['think', 'thought', 'delta', 'say', 'settled']);
+  assert.equal(lines.filter((l) => l.t === 'think').map((l) => (l as { text: string }).text).join(''), 'They greet me. A greeting back will do.');
+  const thought = lines.find((l) => l.t === 'thought') as { text: string; ms: number };
+  assert.equal(thought.text, 'They greet me. A greeting back will do.');
+  assert.ok(thought.ms >= 0);
+  // Every line says when it happened.
+  assert.ok(lines.every((l) => typeof l.at === 'number' && l.at > 0));
+  const again: AgentLine[] = [];
+  await pi.agentAttach(name, (raw) => again.push(JSON.parse(raw) as AgentLine));
+  assert.deepEqual(again.map((l) => l.t), ['thought', 'say', 'settled']);
+});
+
+test('not asked to think: no reasoning asked for, and what the model thinks anyway is still told', async () => {
+  const { name } = newRun();
+  play(() => ({ reasoning: 'Hm.', text: 'Yes.' }));
+  const before = model.seen.length;
+  const r = await run(name, 'ok?');
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(model.seen[before].body.reasoning, undefined);
+  assert.equal(model.seen[before].body.reasoning_effort, undefined);
+  assert.equal((r.lines.find((l) => l.t === 'thought') as { text: string }).text, 'Hm.');
+});
+
+test('an edit comes back with its change as a diff', async () => {
+  const { name, ws } = newRun();
+  writeFileSync(join(ws, 'notes.md'), 'one\ntwo\nthree\n');
+  play((_s, n) => (n === 1 ? { tools: [{ name: 'edit', args: { path: 'notes.md', edits: [{ oldText: 'two', newText: 'TWO' }] } }] } : { text: 'Changed.' }));
+  const r = await run(name, 'shout the second line');
+  assert.equal(r.code, 0, r.stderr);
+  const result = r.lines.find((l) => l.t === 'result') as { patch?: string; failed: boolean };
+  assert.equal(result.failed, false);
+  assert.match(result.patch ?? '', /^-two$/m);
+  assert.match(result.patch ?? '', /^\+TWO$/m);
+  // Paths from the workspace's root, as everywhere else on the page.
+  assert.ok(!(result.patch ?? '').includes(ws));
 });

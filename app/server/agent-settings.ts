@@ -10,8 +10,13 @@ import { join } from 'node:path';
 import { fetch as proxiedFetch, ProxyAgent } from 'undici';
 import { z } from 'zod';
 import { decrypt, encrypt, getSetting, putSetting } from './accounts';
+import { THINKING_LEVELS, type Thinking } from './pi';
 
-interface Stored { enabled: boolean; baseUrl: string; model: string; key?: string; proxy: string; maxSteps: number; maxUsd: number }
+/** How hard the model is asked to think. `auto`: medium where the provider's way of asking is known, otherwise not at all. */
+export const THINKING_CHOICES = ['auto', 'off', ...THINKING_LEVELS] as const;
+type ThinkingChoice = (typeof THINKING_CHOICES)[number];
+
+interface Stored { enabled: boolean; baseUrl: string; model: string; key?: string; proxy: string; maxSteps: number; maxUsd: number; thinking?: ThinkingChoice }
 
 export const AgentInput = z.object({
   enabled: z.boolean(),
@@ -25,7 +30,20 @@ export const AgentInput = z.object({
   maxSteps: z.number().int().min(1).max(200),
   /** What one run may spend on the agent, in US dollars. */
   maxUsd: z.number().min(0.01).max(1000),
+  /** Whether, and how hard, the model is asked to think before it acts; the page shows what it thinks. */
+  thinking: z.enum(THINKING_CHOICES).default('auto'),
 });
+
+/**
+ * How the endpoint is asked for thinking: OpenRouter and DeepSeek each have their own field; any
+ * other OpenAI-compatible endpoint gets OpenAI's reasoning_effort, which only reasoning models take,
+ * so there it is asked for only when an admin says so.
+ */
+export function thinkingFor(baseUrl: string, choice: ThinkingChoice = 'auto'): Thinking | undefined {
+  const format = /openrouter\.ai/.test(baseUrl) ? 'openrouter' : /deepseek\.com/.test(baseUrl) ? 'deepseek' : 'openai';
+  if (choice === 'off' || (choice === 'auto' && format === 'openai')) return undefined;
+  return { level: choice === 'auto' ? 'medium' : choice, format };
+}
 
 const KEY = 'agent';
 const HARNESS_KEY_FILE = process.env.FDEGYM_OPENROUTER_KEY_FILE || join(homedir(), '.fdegym', 'openrouter_key');
@@ -48,14 +66,14 @@ export async function agentView() {
 export async function saveAgent(input: z.infer<typeof AgentInput>) {
   const old = await load();
   const key = input.key === undefined ? old.key : input.key === '' ? undefined : encrypt(input.key);
-  await putSetting(KEY, { enabled: input.enabled, baseUrl: input.baseUrl.replace(/\/+$/, ''), model: input.model, key, proxy: input.proxy, maxSteps: input.maxSteps, maxUsd: input.maxUsd } satisfies Stored);
+  await putSetting(KEY, { enabled: input.enabled, baseUrl: input.baseUrl.replace(/\/+$/, ''), model: input.model, key, proxy: input.proxy, maxSteps: input.maxSteps, maxUsd: input.maxUsd, thinking: input.thinking } satisfies Stored);
 }
 
 /** What a turn of the agent needs, or undefined when the agent is off or has no key to use. */
 export async function agentConfig() {
   const s = await load();
   const key = s.key ? decrypt(s.key) : harnessKey();
-  return s.enabled && key ? { baseUrl: s.baseUrl, model: s.model, key, proxy: s.proxy || undefined, maxSteps: s.maxSteps, maxUsd: s.maxUsd } : undefined;
+  return s.enabled && key ? { baseUrl: s.baseUrl, model: s.model, key, proxy: s.proxy || undefined, maxSteps: s.maxSteps, maxUsd: s.maxUsd, thinking: thinkingFor(s.baseUrl, s.thinking) } : undefined;
 }
 
 export const agentAvailable = async () => !!(await agentConfig());

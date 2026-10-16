@@ -26,7 +26,14 @@ import { SessionError } from './session-error';
 export type AgentItem =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string }
-  | { kind: 'tool'; id: string; name: string; args: Record<string, unknown>; output?: string; failed?: boolean; /** What a command still running has printed so far. */ partial?: string };
+  /** What the model thought before it went on, and for how long (ms). Empty when the provider keeps it to itself. */
+  | { kind: 'thought'; text: string; ms?: number }
+  | {
+    kind: 'tool'; id: string; name: string; args: Record<string, unknown>; output?: string; failed?: boolean;
+    /** What a command still running has printed so far. */ partial?: string;
+    /** How long it took, from being called to coming back (ms). */ ms?: number;
+    /** An edit's change to the file, as a unified diff. */ patch?: string;
+  };
 type Tool = Extract<AgentItem, { kind: 'tool' }>;
 
 /** Added to pi's own system prompt for every turn. */
@@ -129,8 +136,8 @@ async function charge(runId: string, prompt: number, completion: number, usd: nu
 
 // ---- one turn
 
-type End = 'answered' | 'stopped' | 'steps' | 'budget' | 'detached';
-type Outcome = { end: End; spend: AgentSpend };
+export type AgentEnd = 'answered' | 'stopped' | 'steps' | 'budget' | 'detached';
+export type Outcome = { end: AgentEnd; spend: AgentSpend };
 
 /** Turns this process is following right now. */
 const running = new Map<string, AbortController>();
@@ -179,56 +186,170 @@ export async function stopAgent(runId: string, runner?: Runner): Promise<boolean
   return had > 0;
 }
 
+/** What the page is told of a turn as it happens. */
 export type AgentEvent =
   | { event: 'item'; data: AgentItem }
   | { event: 'delta'; data: { text: string } }
+  /** A piece of what the model is thinking; the whole of it follows as a `thought` item. */
+  | { event: 'think'; data: { text: string } }
+  /** How much of a tool call's arguments the model has written so far. */
+  | { event: 'drafting'; data: { id: string; chars: number } }
   | { event: 'args'; data: { id: string; args: Record<string, unknown> } }
   | { event: 'output'; data: { id: string; output: string } }
-  | { event: 'result'; data: { id: string; output: string; failed: boolean } };
+  | { event: 'result'; data: { id: string; output: string; failed: boolean; ms?: number; patch?: string } }
+  /** A model call failed and pi is trying it again. */
+  | { event: 'retry'; data: { message: string } }
+  /** What the run has spent, after each model call. */
+  | { event: 'spend'; data: AgentSpend }
+  | { event: 'done'; data: Outcome }
+  | { event: 'error'; data: { error: string } };
+
+// ---- a turn as it happens, for every page watching it
+
+/**
+ * A turn under way, as the pages watching it are told it: every event in order, numbered from 1
+ * (`seq`) and stamped with the site's time. A page that opens later, reloads, or loses its stream
+ * says how far it got and hears the rest; one that comes to a turn already under way hears it from
+ * the start. Pieces of text and of thinking that come close together are told as one. A turn taken
+ * up again after touch with the runner was lost (resumeTurns) is told afresh, as a new one.
+ */
+export type LiveEvent = AgentEvent & { seq: number; at: number };
+interface Live {
+  id: string; startedAt: number; events: LiveEvent[]; over: boolean;
+  watchers: Set<(e: LiveEvent) => void>; pending?: { event: 'delta' | 'think'; text: string }; timer?: ReturnType<typeof setTimeout>;
+}
+const lives = new Map<string, Live>();
+/** How long pieces of text wait for the next before they are told, together. */
+const MERGE_MS = 60;
+/** How long an ended turn can still be heard, by a page that was away when it ended. */
+const LIVE_KEPT_MS = 10 * 60_000;
+
+function openLive(runId: string, user: string): Live {
+  const old = lives.get(runId);
+  if (old && !old.over) closeLive(runId, old, { event: 'done', data: { end: 'detached', spend: { usd: 0, tokens: 0, prompt: 0, completion: 0, context: 0 } } });
+  const live: Live = { id: randomBytes(6).toString('base64url'), startedAt: Date.now(), events: [], over: false, watchers: new Set() };
+  lives.set(runId, live);
+  tell(live, { event: 'item', data: { kind: 'user', text: user } });
+  return live;
+}
+function told(live: Live, e: AgentEvent) {
+  const one = { ...e, seq: live.events.length + 1, at: Date.now() } as LiveEvent;
+  live.events.push(one);
+  for (const w of live.watchers) w(one);
+}
+function flush(live: Live) {
+  if (live.timer) { clearTimeout(live.timer); live.timer = undefined; }
+  const p = live.pending;
+  live.pending = undefined;
+  if (p) told(live, { event: p.event, data: { text: p.text } });
+}
+function tell(live: Live, e: AgentEvent) {
+  if (live.over) return;
+  if (e.event === 'delta' || e.event === 'think') {
+    if (live.pending && live.pending.event !== e.event) flush(live);
+    if (live.pending) live.pending.text += e.data.text;
+    else live.pending = { event: e.event, text: e.data.text };
+    live.timer ??= setTimeout(() => flush(live), MERGE_MS);
+    return;
+  }
+  flush(live);
+  told(live, e);
+}
+function closeLive(runId: string, live: Live, last: AgentEvent) {
+  tell(live, last);
+  live.over = true;
+  live.watchers.clear();
+  setTimeout(() => { if (lives.get(runId) === live) lives.delete(runId); }, LIVE_KEPT_MS).unref();
+}
+const tellRun = (runId: string, e: AgentEvent) => { const live = lives.get(runId); if (live) tell(live, e); };
+
+/** The turn under way in a run, if this site is following one: its id, and when it began. */
+export function liveTurn(runId: string): { turn: string; startedAt: number } | undefined {
+  const live = lives.get(runId);
+  return live && !live.over ? { turn: live.id, startedAt: live.startedAt } : undefined;
+}
+
+/**
+ * Hear a turn from after `after`: what it has told so far at once, then the rest as it happens.
+ * Undefined when the run has no such turn (it is not `turn`, or the site no longer has it): the
+ * page then reads the conversation afresh. `stop` lets go; an ended turn lets go by itself.
+ */
+export function followTurn(runId: string, turn: string | undefined, after: number, on: (e: LiveEvent) => void): { over: boolean; startedAt: number; stop: () => void } | undefined {
+  const live = lives.get(runId);
+  if (!live || (turn && turn !== live.id)) return undefined;
+  for (const e of live.events) if (e.seq > after) on(e);
+  if (live.over) return { over: true, startedAt: live.startedAt, stop: () => undefined };
+  live.watchers.add(on);
+  return { over: false, startedAt: live.startedAt, stop: () => live.watchers.delete(on) };
+}
+
+/**
+ * What the learner is told when the model provider failed the turn: the kind of failure, by the
+ * provider's status (pi reports a failed call as "402: {...}"), so that one that will not mend by
+ * trying again says whom to tell. The provider's own words stay in the site's log.
+ */
+export function failureText(failure: string | undefined): string {
+  const status = Number(/^\s*(\d{3})\b/.exec(failure ?? '')?.[1]);
+  if (status === 402) return '助手的模型服务余额不足，请联系管理员充值或更换「助手」设置里的接口';
+  if (status === 401 || status === 403) return '助手的模型服务不接受本站的密钥，请联系管理员检查「助手」设置';
+  if (status === 429) return '助手的模型服务现在请求太多，请稍后再试';
+  return '助手的模型服务调用失败，请稍后再试；一直失败请联系管理员检查「助手」设置';
+}
 
 /**
  * Reads a turn's lines as the runner sends them: passes each on (`emit`) and keeps what the page
  * shows of it. `have` is how far the lines were already kept, when a turn is taken up again: the
- * runner then tells it from the start, and the earlier lines only rebuild where the turn stands.
+ * runner then tells it from the start, and the earlier lines rebuild where the turn stands, for
+ * the pages watching it, without being kept twice.
  */
 function reader(runId: string, maxSteps: number, runner: Runner, control: AbortController, emit: (e: AgentEvent) => void, have = 0) {
-  const turn: { end: End; failure?: string; steps: number; last: number } = { end: 'answered', steps: 0, last: have };
+  const turn: { end: AgentEnd; failure?: string; steps: number; last: number } = { end: 'answered', steps: 0, last: have };
   // Written one after another, in the order things happened, each with how far that brings the record.
   let saved: Promise<unknown> = Promise.resolve();
   const save = (item: AgentItem, n: number) => {
+    if (n <= have) return;
     saved = saved.then(() => db.run(`WITH kept AS (INSERT INTO agent_messages (run_id, message, ts) VALUES ($1, $2::jsonb, $3))
       UPDATE agent_turns SET seq = $4 WHERE run_id = $1`, [runId, json({ v: 2, item } satisfies Stored), Date.now(), n])).catch((e) => console.error(e));
   };
-  const open = new Map<string, Tool>();
-  const finish = (id: string, output: string, failed: boolean, n: number) => {
-    const item = open.get(id);
-    if (!item) return;
+  // Tools called and not yet back, with when each was called (on the runner's clock, as their results are).
+  const open = new Map<string, { item: Tool; at?: number }>();
+  const finish = (id: string, output: string, failed: boolean, n: number, at?: number, patch?: string) => {
+    const o = open.get(id);
+    if (!o) return;
     open.delete(id);
-    if (n <= have) return;
-    save({ ...item, output, failed }, n);
-    emit({ event: 'result', data: { id, output, failed } });
+    const ms = at !== undefined && o.at !== undefined ? Math.max(0, at - o.at) : undefined;
+    const done = { output, failed, ...(ms !== undefined ? { ms } : {}), ...(patch ? { patch } : {}) };
+    save({ ...o.item, ...done }, n);
+    emit({ event: 'result', data: { id, ...done } });
   };
   const onLine = (line: string) => {
     let l: AgentLine;
     try { l = JSON.parse(line) as AgentLine; } catch { return; }
     const n = l.n ?? turn.last + 1;
-    const old = n <= have;
     turn.last = Math.max(turn.last, n);
-    if (l.t === 'delta') { if (!old) emit({ event: 'delta', data: { text: l.text } }); }
-    else if (l.t === 'say') {
-      if (l.text.trim() && !old) { const item: AgentItem = { kind: 'assistant', text: l.text }; save(item, n); emit({ event: 'item', data: item }); }
+    if (l.t === 'delta') emit({ event: 'delta', data: { text: l.text } });
+    else if (l.t === 'think') emit({ event: 'think', data: { text: l.text } });
+    else if (l.t === 'thought') {
+      const item: AgentItem = { kind: 'thought', text: l.text, ms: l.ms };
+      save(item, n);
+      emit({ event: 'item', data: item });
+    } else if (l.t === 'say') {
+      if (l.text.trim()) { const item: AgentItem = { kind: 'assistant', text: l.text }; save(item, n); emit({ event: 'item', data: item }); }
       // A failed reply may be tried again; only the last one counts.
       turn.failure = l.stop === 'error' ? (l.error || 'the model call failed') : undefined;
     } else if (l.t === 'tool') {
       const item: Tool = { kind: 'tool', id: l.id, name: l.name, args: l.args };
-      open.set(l.id, item);
-      if (!old) emit({ event: 'item', data: item });
+      open.set(l.id, { item, at: l.at });
+      emit({ event: 'item', data: item });
       if (++turn.steps > maxSteps && !control.signal.aborted) { turn.end = 'steps'; control.abort(); void runner.agentStop(runId).catch(() => undefined); }
-    } else if (l.t === 'args') {
-      const item = open.get(l.id);
-      if (item) { item.args = l.args; if (!old) emit({ event: 'args', data: { id: l.id, args: l.args } }); }
-    } else if (l.t === 'output') { if (!old) emit({ event: 'output', data: { id: l.id, output: l.output } }); }
-    else if (l.t === 'result') finish(l.id, l.output, l.failed, n);
+    } else if (l.t === 'drafting') emit({ event: 'drafting', data: { id: l.id, chars: l.chars } });
+    else if (l.t === 'args') {
+      const o = open.get(l.id);
+      // The call is made once its arguments are whole; how long it took is counted from there.
+      if (o) { o.item.args = l.args; if (l.at !== undefined) o.at = l.at; emit({ event: 'args', data: { id: l.id, args: l.args } }); }
+    } else if (l.t === 'output') emit({ event: 'output', data: { id: l.id, output: l.output } });
+    else if (l.t === 'result') finish(l.id, l.output, l.failed, n, l.at, l.patch);
+    else if (l.t === 'retry') emit({ event: 'retry', data: { message: l.message } });
   };
   return {
     onLine,
@@ -245,7 +366,7 @@ function reader(runId: string, maxSteps: number, runner: Runner, control: AbortC
         else if (spentOut.has(runId)) turn.end = 'budget';
         else if (turn.failure || r.code !== 0) {
           console.error('agent turn failed:', turn.failure ?? (r.stderr.trim() || `pi exited with ${r.signal ?? r.code}`));
-          throw new SessionError('助手的模型服务调用失败，请稍后再试；一直失败请联系管理员检查「助手」设置', 502);
+          throw new SessionError(failureText(turn.failure), 502);
         }
       }
       return { end: turn.end, spend: await agentSpend(runId) };
@@ -254,12 +375,14 @@ function reader(runId: string, maxSteps: number, runner: Runner, control: AbortC
 }
 
 /**
- * Carry out one message from the learner: pi works on the runner until it answers in words, the
- * step limit is reached, or the learner stops it. `emit` gets each piece as it happens. Resolves to
- * why the turn ended; `detached` when touch with the runner was lost while pi was still at work
- * (the turn goes on there and is taken up again, see resumeTurns).
+ * Begin carrying out one message from the learner: pi works on the runner until it answers in
+ * words, the step limit is reached, or the learner stops it. Refused at once (thrown) when it cannot
+ * begin; otherwise the turn is under way and can be followed (followTurn) by its id. `outcome`
+ * resolves to why it ended; `detached` when touch with the runner was lost while pi was still at
+ * work (the turn goes on there and is taken up again, see resumeTurns). `emit` also gets each
+ * piece as it happens, for a caller that wants them first-hand.
  */
-export async function agentTurn(runId: string, runner: Runner, text: string, emit: (e: AgentEvent) => void): Promise<Outcome> {
+export async function startAgentTurn(runId: string, runner: Runner, text: string, emit: (e: AgentEvent) => void = () => undefined): Promise<{ turn: string; outcome: Promise<Outcome> }> {
   const cfg = await agentConfig();
   if (!cfg) throw new SessionError('本站没有开放助手');
   if (!runner.info.agent) throw new SessionError('这次练习所在的沙箱机没有装 coding agent，请联系管理员');
@@ -275,26 +398,45 @@ export async function agentTurn(runId: string, runner: Runner, text: string, emi
     await db.run(`INSERT INTO agent_turns (run_id, token_hash, runner, seq, started_at) VALUES ($1, $2, $3, 0, $4)
       ON CONFLICT (run_id) DO UPDATE SET token_hash = EXCLUDED.token_hash, runner = EXCLUDED.runner, seq = 0, started_at = EXCLUDED.started_at`,
     [runId, sha256(token), runner.name, Date.now()]);
-    const read = reader(runId, cfg.maxSteps, runner, control, emit);
-    let r: Awaited<ReturnType<Runner['agentTurn']>>;
-    try {
-      r = await runner.agentTurn(runId, { message: text, model: cfg.model, url: SELF, token, system: SYSTEM, contextWindow: await contextWindow(cfg) }, read.onLine);
-    } catch (e) {
-      await read.settle();
-      if (e instanceof RunnerOffline && !control.signal.aborted) return { end: 'detached', spend: await agentSpend(runId) };
-      await closeTurn(runId);
-      throw e;
-    }
-    return await read.end(r);
-  } finally {
+  } catch (e) {
     running.delete(runId);
+    turns.delete(token);
+    throw e;
   }
+  // Opened once the learner's message is in the record: a page that reads the conversation while the turn is under way leaves out what the turn tells.
+  const live = openLive(runId, text);
+  const out = (e: AgentEvent) => { tell(live, e); emit(e); };
+  const outcome = (async (): Promise<Outcome> => {
+    try {
+      const read = reader(runId, cfg.maxSteps, runner, control, out);
+      let r: Awaited<ReturnType<Runner['agentTurn']>>;
+      try {
+        r = await runner.agentTurn(runId, { message: text, model: cfg.model, url: SELF, token, system: SYSTEM, contextWindow: await contextWindow(cfg), thinking: cfg.thinking }, read.onLine);
+      } catch (e) {
+        await read.settle();
+        if (e instanceof RunnerOffline && !control.signal.aborted) return { end: 'detached', spend: await agentSpend(runId) };
+        await closeTurn(runId);
+        throw e;
+      }
+      return await read.end(r);
+    } finally {
+      running.delete(runId);
+    }
+  })();
+  outcome.then((o) => closeLive(runId, live, { event: 'done', data: o }), (e) => closeLive(runId, live, { event: 'error', data: { error: e instanceof Error ? e.message : String(e) } }));
+  return { turn: live.id, outcome };
+}
+
+/** One message from the learner, carried out to its end (see startAgentTurn). */
+export async function agentTurn(runId: string, runner: Runner, text: string, emit: (e: AgentEvent) => void): Promise<Outcome> {
+  return (await startAgentTurn(runId, runner, text, emit)).outcome;
 }
 
 /**
  * A runner is in touch (again): take up the turns that were under way on it when touch was lost,
- * because the site restarted or the line dropped. Nobody is watching them live any more; the page
- * finds what they did in the record. A turn the runner no longer has (it restarted too) is closed.
+ * because the site restarted or the line dropped. The runner tells each from the start, and pages
+ * watching hear it afresh, as a new turn; what was kept before is not kept twice. A turn the runner
+ * no longer has (it restarted too) is closed.
  */
 export async function resumeTurns(runner: Runner): Promise<void> {
   const cfg = await agentConfig();
@@ -302,14 +444,17 @@ export async function resumeTurns(runner: Runner): Promise<void> {
     if (running.has(row.run_id)) continue;
     const control = new AbortController();
     running.set(row.run_id, control);
-    const read = reader(row.run_id, cfg?.maxSteps ?? 40, runner, control, () => undefined, row.seq);
+    const asked = await db.one<{ message: Stored }>("SELECT message FROM agent_messages WHERE run_id = $1 AND (message->'item'->>'kind' = 'user' OR message->>'role' = 'user') ORDER BY id DESC LIMIT 1", [row.run_id]);
+    const live = openLive(row.run_id, asked ? ('v' in asked.message ? (asked.message.item as { text?: string }).text ?? '' : String((asked.message as { content?: unknown }).content ?? '')) : '');
+    const read = reader(row.run_id, cfg?.maxSteps ?? 40, runner, control, (e) => tell(live, e), row.seq);
     void runner.agentAttach(row.run_id, read.onLine)
-      .then((r) => read.end(r), async (e) => {
+      .then(async (r) => { closeLive(row.run_id, live, { event: 'done', data: await read.end(r) }); }, async (e) => {
         await read.settle();
         // Out of touch again: it stays on record for the next time. Anything else: the runner does not have it.
         if (!(e instanceof RunnerOffline)) await closeTurn(row.run_id);
+        closeLive(row.run_id, live, { event: 'done', data: { end: 'detached', spend: await agentSpend(row.run_id) } });
       })
-      .catch(() => undefined)
+      .catch((e) => closeLive(row.run_id, live, { event: 'error', data: { error: e instanceof Error ? e.message : String(e) } }))
       .finally(() => { if (running.get(row.run_id) === control) running.delete(row.run_id); });
   }
 }
@@ -321,8 +466,11 @@ export const forgetLocalTurns = () => db.run("DELETE FROM agent_turns WHERE runn
 
 const refuse = (status: number, message: string) => new Response(JSON.stringify({ error: { message, code: status } }), { status, headers: { 'content-type': 'application/json' } });
 type Usage = { prompt_tokens?: number; completion_tokens?: number; cost?: number };
+/** A model call's cost, on the bill; the pages watching the turn are told the new figure. */
 const count = (runId: string, u: Usage | undefined) =>
-  (u ? charge(runId, Math.round(u.prompt_tokens ?? 0), Math.round(u.completion_tokens ?? 0), Number(u.cost) || 0).catch((e) => console.error(e)) : Promise.resolve());
+  (u ? charge(runId, Math.round(u.prompt_tokens ?? 0), Math.round(u.completion_tokens ?? 0), Number(u.cost) || 0)
+    .then(async () => { if (liveTurn(runId)) tellRun(runId, { event: 'spend', data: await agentSpend(runId) }); })
+    .catch((e) => console.error(e)) : Promise.resolve());
 
 export function agentRoutes(app: Hono) {
   app.post('/api/agent/v1/chat/completions', async (c) => {

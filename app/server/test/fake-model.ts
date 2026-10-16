@@ -9,6 +9,8 @@ import type { AddressInfo } from 'node:net';
 
 export interface Reply {
   text?: string;
+  /** What it thinks before it answers, told as OpenRouter tells it (`reasoning`). */
+  reasoning?: string;
   tools?: { name: string; args: Record<string, unknown> }[];
   /** What the call is said to have cost; the site's relay counts it. */
   usage?: { prompt_tokens: number; completion_tokens: number; cost: number };
@@ -39,12 +41,19 @@ export async function fakeModel(script: (seen: Seen, n: number) => Reply): Promi
       const calls_ = (r.tools ?? []).map((t, i) => ({ index: i, id: `call_${n}_${i}`, type: 'function', function: { name: t.name, arguments: JSON.stringify(t.args) } }));
       if (!s.body.stream) {
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ id: `c${n}`, model: s.body.model, choices: [{ index: 0, message: { role: 'assistant', content: r.text ?? null, ...(calls_.length ? { tool_calls: calls_ } : {}) }, finish_reason: calls_.length ? 'tool_calls' : 'stop' }], usage }));
+        res.end(JSON.stringify({ id: `c${n}`, model: s.body.model, choices: [{ index: 0, message: { role: 'assistant', content: r.text ?? null, ...(r.reasoning ? { reasoning: r.reasoning } : {}), ...(calls_.length ? { tool_calls: calls_ } : {}) }, finish_reason: calls_.length ? 'tool_calls' : 'stop' }], usage }));
         return;
       }
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       const base = { id: `c${n}`, object: 'chat.completion.chunk', created: 1, model: s.body.model };
       const send = (o: object) => res.write(`data: ${JSON.stringify({ ...base, ...o })}\n\n`);
+      // Thinking first, in two pieces, then the words.
+      const think = r.reasoning ?? '';
+      if (think) {
+        const half = Math.ceil(think.length / 2);
+        send({ choices: [{ index: 0, delta: { role: 'assistant', reasoning: think.slice(0, half) } }] });
+        if (think.length > half) send({ choices: [{ index: 0, delta: { reasoning: think.slice(half) } }] });
+      }
       // Words in two pieces, so that a reader has something to put together.
       const text = r.text ?? '';
       if (text) {
