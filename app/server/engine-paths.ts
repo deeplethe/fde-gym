@@ -24,3 +24,9 @@ export const IMPORT_DIR = process.env.FDEGYM_IMPORT_DIR !== undefined
   ? (process.env.FDEGYM_IMPORT_DIR ? resolve(process.env.FDEGYM_IMPORT_DIR) : undefined)
   : (existsSync(join(ROOT, 'cases')) ? join(ROOT, 'cases') : undefined);
 export const PYTHON = process.env.FDEGYM_PYTHON ?? 'python3';
+/**
+ * The API's port: API_PORT, else PORT, else 8787. Under `pnpm dev` it is 8787 unless API_PORT says
+ * otherwise, where Vite sends /api, so that a PORT meant for Vite does not pull the API onto it.
+ */
+/** (Read when asked: a test sets API_PORT after this module has loaded.) */
+export const apiPort = () => Number(process.env.API_PORT ?? (process.env.npm_lifecycle_event === 'dev' ? undefined : process.env.PORT) ?? 8787);

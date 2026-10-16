@@ -12,7 +12,11 @@ const data = realpathSync(mkdtempSync(join(tmpdir(), 'fdegym-changes-test-')));
 process.env.FDEGYM_DATA = data;
 let harness: typeof import('../harness');
 before(async () => { harness = await import('../harness'); });
-after(() => rmSync(data, { recursive: true, force: true }));
+after(async () => {
+  // The runs' sandboxes go with them (with FDEGYM_SANDBOX=docker, their containers).
+  for (let i = 1; i <= runs; i++) await harness.sandbox.destroy(`run-${i}`).catch(() => undefined);
+  rmSync(data, { recursive: true, force: true });
+});
 
 let runs = 0;
 /** A run as createRun leaves it: the workspace, and the copy of it as built. */
@@ -45,7 +49,7 @@ test('what was changed, added and removed, with how many lines', async () => {
   // Not the learner's work, and not shown in the file tree either.
   mkdirSync(join(ws, 'system/__pycache__'));
   writeFileSync(join(ws, 'system/__pycache__/app.pyc'), 'junk');
-  symlinkSync('/etc/hosts', join(ws, 'link'));
+  try { symlinkSync('/etc/hosts', join(ws, 'link')); } catch { /* Windows lets only some users make links */ }
   assert.deepEqual(await harness.changes(name), [
     { path: 'data/blob.bin', status: 'modified', added: null, removed: null },
     { path: 'deliverables/note.md', status: 'added', added: 3, removed: 0 },
@@ -102,7 +106,7 @@ test('what the customer handed over is not changed through the file API: the bri
 test('a SQLite file is read as its tables and a page of rows', async () => {
   const { name, ws } = newRun({ 'TASK.md': 'brief\n', 'data/readme.txt': 'not a database\n' });
   const { execFileSync } = await import('node:child_process');
-  execFileSync('python3', ['-c', `
+  execFileSync(process.env.FDEGYM_PYTHON || 'python3', ['-c', `
 import sqlite3, sys
 con = sqlite3.connect(sys.argv[1])
 con.execute('create table visits (id integer primary key, dept text, note text, photo blob, score real)')

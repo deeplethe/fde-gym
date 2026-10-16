@@ -14,6 +14,7 @@ import { fakeModel, type Reply, type Seen } from './fake-model';
 const data = realpathSync(mkdtempSync(join(tmpdir(), 'fdegym-pi-test-')));
 process.env.FDEGYM_DATA = data;
 let pi: typeof import('../pi');
+let workspacePath: (name: string) => string;
 /** What the run's sandbox was asked to do, by whom: pi's tools reach the workspace only through it. */
 const asked: { op: string; id: string; what: unknown }[] = [];
 let model: Awaited<ReturnType<typeof fakeModel>>;
@@ -24,6 +25,7 @@ function play(f: (seen: Seen, n: number) => Reply) { let n = 0; script = (seen) 
 before(async () => {
   pi = await import('../pi');
   const { sandbox } = await import('../harness');
+  workspacePath = (name) => sandbox.workspacePath(name);
   for (const op of ['exec', 'readFile', 'writeFile', 'mkdir'] as const) {
     const real = (sandbox[op] as (...a: unknown[]) => unknown).bind(sandbox);
     Object.assign(sandbox, { [op]: (id: string, what: unknown, ...rest: unknown[]) => { asked.push({ op, id, what }); return real(id, what, ...rest); } });
@@ -32,18 +34,22 @@ before(async () => {
 });
 after(async () => {
   await model.close();
+  // The runs' sandboxes go with them (with FDEGYM_SANDBOX=docker, their containers).
+  const { sandbox } = await import('../harness');
+  for (let i = 1; i <= runs; i++) await sandbox.destroy(`run-${i}`).catch(() => undefined);
   rmSync(data, { recursive: true, force: true });
 });
 
 let runs = 0;
 /** A run's folder as the harness leaves it, as far as the agent is concerned. */
-function newRun(): { name: string; ws: string } {
+/** `ws`: the workspace on this machine's disk; `at`: where the model is told it is (the sandbox's path for it). */
+function newRun(): { name: string; ws: string; at: string } {
   const name = `run-${++runs}`;
   const ws = join(data, 'runs', name, 'workspace');
   mkdirSync(join(ws, 'bin'), { recursive: true });
   writeFileSync(join(ws, 'TASK.md'), 'The brief.\n');
   writeFileSync(join(ws, 'bin', 'ask'), '#!/bin/sh\necho "asked the customer"\n', { mode: 0o755 });
-  return { name, ws };
+  return { name, ws, at: workspacePath(name) };
 }
 const turn = (message: string): AgentTurn => ({ message, model: 'test/model', url: model.url, token: 'turn-token', system: 'You work in a test.' });
 async function run(name: string, message: string, onLine?: (l: AgentLine) => void) {
@@ -75,8 +81,8 @@ test('words only: streamed in pieces, then the finished piece', async () => {
 });
 
 test('a tool call: shown as soon as it is named, with paths from the workspace root, and what it said first comes first', async () => {
-  const { name, ws } = newRun();
-  play((_s, n) => (n === 1 ? { text: 'Reading the brief.', tools: [{ name: 'bash', args: { command: `cd ${ws} && cat ${ws}/TASK.md` } }] } : { text: 'Done.' }));
+  const { name, at } = newRun();
+  play((_s, n) => (n === 1 ? { text: 'Reading the brief.', tools: [{ name: 'bash', args: { command: `cd ${at} && cat ${at}/TASK.md` } }] } : { text: 'Done.' }));
   const r = await run(name, 'read the brief');
   assert.equal(r.code, 0, r.stderr);
   const order = r.lines.filter((l) => l.t !== 'delta' && l.t !== 'output');
@@ -232,7 +238,7 @@ const resultsOf = (lines: AgentLine[]) => {
 };
 
 test('pi works outside the workspace: its tools read, write and run there through the sandbox, and the model is told it works there', async () => {
-  const { name, ws } = newRun();
+  const { name, ws, at } = newRun();
   play((_s, n) => (n === 1 ? { tools: [{ name: 'bash', args: { command: 'pwd; env' } }, { name: 'read', args: { path: 'TASK.md' } }, { name: 'write', args: { path: 'deliverables/plan.md', content: 'a plan' } }] } : { text: 'Done.' }));
   const before = model.seen.length, from = asked.length;
   const r = await run(name, 'look around');
@@ -250,7 +256,7 @@ test('pi works outside the workspace: its tools read, write and run there throug
   // pi's own folder is where it runs, and the model is not told of it.
   const agent = join(data, 'runs', name, 'agent');
   const prompt = JSON.stringify(model.seen[before].body.messages[0]);
-  assert.ok(prompt.includes(ws), prompt);
+  assert.ok(prompt.includes(at), prompt);
   assert.ok(!prompt.includes(agent), prompt);
   assert.equal(existsSync(join(agent, 'tools.js')), true);
   assert.equal(existsSync(join(agent, 'guard.js')), false);

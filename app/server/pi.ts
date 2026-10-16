@@ -101,7 +101,8 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { createBashToolDefinition, createEditToolDefinition, createReadToolDefinition, createWriteToolDefinition } from '@earendil-works/pi-coding-agent';
 
 const WORKSPACE = ${JSON.stringify(workspace)};
-const HOME = ${JSON.stringify(home)};
+// pi writes its own folder into the prompt with forward slashes, on Windows too.
+const HOMES = [...new Set(${JSON.stringify([home, home.split('\\').join('/')])})];
 
 // Requests to the server that started pi, and their answers, over its IPC channel. The channel
 // keeps pi alive only while a request is out, so pi still exits when its turn is over.
@@ -178,7 +179,7 @@ export default function (pi) {
   pi.registerTool(there(createWriteToolDefinition(WORKSPACE, { operations: writeOps })));
   pi.registerTool(there(createEditToolDefinition(WORKSPACE, { operations: editOps })));
   pi.registerTool(there(createBashToolDefinition(WORKSPACE, { operations: bashOps, exposeSessionEnvironment: false })));
-  pi.on('before_agent_start', (event) => (event.systemPrompt.includes(HOME) ? { systemPrompt: event.systemPrompt.split(HOME).join(WORKSPACE) } : undefined));
+  pi.on('before_agent_start', (event) => (HOMES.some((h) => event.systemPrompt.includes(h)) ? { systemPrompt: HOMES.reduce((p, h) => p.split(h).join(WORKSPACE), event.systemPrompt) } : undefined));
   // Asking the customer's people and starting a trial day are the engineer's to do.
   pi.on('tool_call', (event) => {
     if (event.toolName === 'bash' && /\\bbin\\/(ask|pilot)\\b/.test(String(event.input && event.input.command || ''))) {
@@ -306,7 +307,7 @@ function prepare(name: string, turn: AgentTurn): string {
       },
     },
   }), { mode: 0o600 });
-  writeFileSync(join(dir, 'tools.js'), TOOLS(real(workspaceDir(name)), real(dir)), { mode: 0o600 });
+  writeFileSync(join(dir, 'tools.js'), TOOLS(sandbox.workspacePath(name), real(dir)), { mode: 0o600 });
   return dir;
 }
 
@@ -354,9 +355,11 @@ export function agentTurn(name: string, turn: AgentTurn, onLine: (line: string) 
   ];
   // In its own folder, not the workspace: pi would take settings from a .pi/ folder where it starts.
   const child = spawn(process.execPath, args, {
-    cwd: dir, detached: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], serialization: 'advanced',
+    cwd: dir, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], serialization: 'advanced',
     env: {
       PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: dir, TMPDIR: process.env.TMPDIR ?? '/tmp', LANG: 'en_US.UTF-8', TERM: 'dumb', NO_COLOR: '1',
+      // What a Windows process cannot do without (its sockets need SystemRoot), and its home and temporary folders there.
+      ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows', USERPROFILE: dir, TEMP: process.env.TEMP ?? '', TMP: process.env.TMP ?? '' } : {}),
       PI_CODING_AGENT_DIR: dir, PI_OFFLINE: '1', PI_SKIP_VERSION_CHECK: '1', PI_TELEMETRY: '0',
     },
   });
@@ -372,7 +375,7 @@ export function agentTurn(name: string, turn: AgentTurn, onLine: (line: string) 
     log.to(line);
   };
   // pi is told the workspace's full path and likes to use it; the page shows paths from the workspace's root, as the file tree does.
-  const roots = [...new Set([real(ws), ws])];
+  const roots = [...new Set([sandbox.workspacePath(name), real(ws), ws])];
   const tidy = (s: string) => roots.reduce((t, root) => t.split(`cd ${root} && `).join('').split(`${root}/`).join('').split(root).join('.'), s);
   const tidied = (v: unknown): unknown => (typeof v === 'string' ? tidy(clip(v, MAX_ARG)) : Array.isArray(v) ? v.map(tidied) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, tidied(x)])) : v);
   const clipped = (a: unknown) => tidied(a && typeof a === 'object' ? a : {}) as Record<string, unknown>;
@@ -479,7 +482,9 @@ export function agentStop(name: string): boolean {
   const child = running.get(name);
   if (!child?.pid) return false;
   const pid = child.pid;
-  try { process.kill(-pid, 'SIGTERM'); } catch { /* already gone */ }
-  setTimeout(() => { if (running.get(name) === child) try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ } }, 1500).unref();
+  // pi is the leader of a group of its own (detached); Windows has no groups, and pi starts nothing there of its own (its commands are the sandbox's, ended with it).
+  const kill = (signal: NodeJS.Signals) => { try { if (process.platform === 'win32') child.kill(signal); else process.kill(-pid, signal); } catch { /* already gone */ } };
+  kill('SIGTERM');
+  setTimeout(() => { if (running.get(name) === child) kill('SIGKILL'); }, 1500).unref();
   return true;
 }

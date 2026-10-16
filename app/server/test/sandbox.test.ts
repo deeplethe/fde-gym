@@ -12,6 +12,8 @@ import type { LocalProvider } from '../sandbox-local';
 
 const data = realpathSync(mkdtempSync(join(tmpdir(), 'fdegym-sandbox-test-')));
 let box: LocalProvider;
+/** Commands on this machine are started with /bin/sh: Windows keeps them in a container instead (FDEGYM_SANDBOX=docker, ./sandbox-docker.test). */
+const skip = process.platform === 'win32' ? 'the local sandbox is not for Windows' : false;
 before(async () => {
   const { LocalProvider } = await import('../sandbox-local');
   box = new LocalProvider({ runsDir: join(data, 'runs'), dataDir: data, readOnly: ['TASK.md', 'docs'] });
@@ -36,7 +38,7 @@ async function run(id: string, command: string | string[], opts: Parameters<Loca
   return { ...r, out, err };
 }
 
-test('a command runs in the workspace and its output comes as it is printed, stdout and stderr apart', async () => {
+test('a command runs in the workspace and its output comes as it is printed, stdout and stderr apart', { skip }, async () => {
   const { id, ws } = await newRun();
   const r = await run(id, 'pwd; echo oops >&2; exit 3');
   assert.deepEqual({ code: r.code, timedOut: r.timedOut, aborted: r.aborted }, { code: 3, timedOut: false, aborted: false });
@@ -48,7 +50,7 @@ test('a command runs in the workspace and its output comes as it is printed, std
   assert.equal((await run(id, ['/bin/echo', 'a b', '$HOME'])).out, 'a b $HOME\n');
 });
 
-test('a command gets a small environment of its own, not the server\'s', async () => {
+test('a command gets a small environment of its own, not the server\'s', { skip }, async () => {
   const { id, ws } = await newRun();
   process.env.FDEGYM_TEST_SECRET = 'do-not-pass';
   try {
@@ -59,7 +61,7 @@ test('a command gets a small environment of its own, not the server\'s', async (
   } finally { delete process.env.FDEGYM_TEST_SECRET; }
 });
 
-test('a command that runs too long, or is stopped, ends with everything it started', async () => {
+test('a command that runs too long, or is stopped, ends with everything it started', { skip }, async () => {
   const { id, ws } = await newRun();
   const t0 = Date.now();
   const late = await run(id, '(sleep 2; touch late.txt) & sleep 30', { timeoutMs: 300 });
@@ -75,7 +77,7 @@ test('a command that runs too long, or is stopped, ends with everything it start
   assert.equal(existsSync(join(ws, 'stopped.txt')), false);
 });
 
-test('files: read (all or the start), written with their folders, looked at, listed, copied and removed', async () => {
+test('files: read (all or the start), written with their folders, looked at, listed, copied and removed', { skip }, async () => {
   const { id, ws } = await newRun({ 'system/app.py': 'print(1)\n', 'system/__pycache__/app.pyc': 'x' });
   assert.equal((await box.readFile(id, 'system/app.py')).toString(), 'print(1)\n');
   assert.equal((await box.readFile(id, 'system/app.py', { maxBytes: 5 })).toString(), 'print');
@@ -98,7 +100,7 @@ test('files: read (all or the start), written with their folders, looked at, lis
   assert.equal(existsSync(join(ws, 'system copy')), false);
 });
 
-test('nothing outside the workspace is reached, through a link either, nor made through a link that points nowhere yet', async () => {
+test('nothing outside the workspace is reached, through a link either, nor made through a link that points nowhere yet', { skip }, async () => {
   const { id, ws } = await newRun();
   const outside = join(data, 'outside.txt');
   writeFileSync(outside, 'secret');
@@ -117,7 +119,7 @@ test('nothing outside the workspace is reached, through a link either, nor made 
   assert.equal(existsSync(join(data, 'copied.md')), false);
 });
 
-test('what was kept read-only is not changed by the server, under its own name or through a link', async () => {
+test('what was kept read-only is not changed by the server, under its own name or through a link', { skip }, async () => {
   const { id, ws } = await newRun();
   symlinkSync('docs', join(ws, 'papers'));
   symlinkSync('TASK.md', join(ws, 'brief.md'));
@@ -136,7 +138,7 @@ test('what was kept read-only is not changed by the server, under its own name o
   assert.equal(existsSync(join(ws, 'TASK.md')), true);
 });
 
-test('ending a sandbox ends what runs in it and removes its workspace', async () => {
+test('ending a sandbox ends what runs in it and removes its workspace', { skip }, async () => {
   const { id, ws } = await newRun();
   const t0 = Date.now();
   const r = run(id, 'sleep 30');

@@ -156,7 +156,7 @@ function connect() {
   ws.on('error', (e) => { if (ws.readyState !== WebSocket.OPEN) console.error(`cannot reach ${SITE}: ${e.message}`); });
 }
 
-const info = harness.EXEC_MODE === 'off' ? 'off' : { user: 'one user per run', sandbox: 'sandboxed to the workspace', none: 'NOT ISOLATED' }[harness.EXEC_ISOLATION];
+const info = harness.EXEC_MODE === 'off' ? 'off' : { user: 'one user per run', sandbox: 'sandboxed to the workspace', container: 'one container per run', none: 'NOT ISOLATED' }[harness.EXEC_ISOLATION];
 console.log(`FDE Gym runner ${NAME} (room for ${CAPACITY} runs; harness ${VERSION || 'unknown'}; commands: ${info})`);
 if (harness.EXEC_MODE !== 'off' && harness.EXEC_ISOLATION === 'none') {
   console.warn('Commands run by learners are not isolated on this host: they can read other runs and the cases fetched to this machine. Run the runner in its container, or on macOS outside any other sandbox.');

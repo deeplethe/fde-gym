@@ -20,7 +20,7 @@ export interface RunnerInfo {
   /** `local` means commands can be run on it; `off` that it offers no terminal. */
   execMode: 'local' | 'off';
   /** How far commands are kept from everything outside the workspace. */
-  isolation: 'user' | 'sandbox' | 'none';
+  isolation: 'user' | 'sandbox' | 'container' | 'none';
   host: string;
   /** Whether the coding agent (pi) is installed on it. */
   agent?: boolean;

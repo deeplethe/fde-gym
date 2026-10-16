@@ -10,7 +10,7 @@ import { L, type Lang } from '@/lib/i18n';
 
 type RunnerRow = {
   name: string; online: boolean; capacity: number | null; active: number; version: string; host: string;
-  isolation: 'user' | 'sandbox' | 'none'; terminal: boolean; firstSeen: number | null; lastSeen: number | null;
+  isolation: 'user' | 'sandbox' | 'container' | 'none'; terminal: boolean; firstSeen: number | null; lastSeen: number | null;
   draining: boolean; disabled: boolean; local: boolean;
 };
 type Listing = { joinable: boolean; runners: RunnerRow[] };
@@ -28,7 +28,7 @@ export function AdminRunners({ adminApi, lang }: { adminApi: AdminApi; lang: Lan
     try { setData(await adminApi<Listing>(`/api/admin/runners/${encodeURIComponent(name)}`, init)); setError(undefined); } catch (e) { setError((e as Error).message); }
   };
   const isolation = (r: RunnerRow) => (!r.terminal ? L(lang, '没有终端', 'No terminal')
-    : { user: L(lang, '每次练习一个系统用户', 'One user per run'), sandbox: L(lang, '系统沙箱', 'System sandbox'), none: L(lang, '没有隔离', 'Not isolated') }[r.isolation]);
+    : { user: L(lang, '每次练习一个系统用户', 'One user per run'), sandbox: L(lang, '系统沙箱', 'System sandbox'), container: L(lang, '每次练习一个容器', 'One container per run'), none: L(lang, '没有隔离', 'Not isolated') }[r.isolation]);
   const when = (t: number | null) => (t ? new Date(t).toLocaleString(lang === 'en' ? 'en-SG' : 'zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
 
   return (

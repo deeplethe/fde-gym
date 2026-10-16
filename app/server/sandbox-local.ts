@@ -17,7 +17,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, lchownSync, lstatSync, mkdirSync, openSync, closeSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import { ROOT } from './engine-paths';
+import { PYTHON, ROOT } from './engine-paths';
 import type { ExecOptions, ExecResult, FileEntry, SandboxProvider, SandboxStat } from './sandbox';
 import { SandboxUnavailable } from './sandbox';
 import { SessionError } from './session-error';
@@ -73,16 +73,18 @@ function keepTree(path: string, gid: number) {
 }
 
 export class LocalProvider implements SandboxProvider {
-  readonly isolation = ISOLATED ? 'user' as const : SANDBOXED ? 'sandbox' as const : 'none' as const;
+  readonly isolation: 'user' | 'sandbox' | 'container' | 'none' = ISOLATED ? 'user' : SANDBOXED ? 'sandbox' : 'none';
+  readonly python: string = PYTHON;
   /** What each run has running, to be ended with it. */
   private readonly running = new Map<string, Set<number>>();
   /** What was kept read-only in each run's workspace, for the macOS profile (it is not written down anywhere else). */
-  private readonly kept = new Map<string, string[]>();
+  protected readonly kept = new Map<string, string[]>();
 
   /** `runsDir/<id>/workspace` is a run's workspace; `dataDir` is everything of the site's on this disk. */
-  constructor(private readonly opts: { runsDir: string; dataDir: string; readOnly?: string[] }) {}
+  constructor(protected readonly opts: { runsDir: string; dataDir: string; readOnly?: string[] }) {}
 
   workspace(id: string) { return join(this.opts.runsDir, id, 'workspace'); }
+  workspacePath(id: string) { return real(this.workspace(id)); }
   private uidFile(id: string) { return join(this.opts.runsDir, id, 'uid'); }
   /** The run's own user, where runs have one. */
   uid(id: string): number | undefined { return ISOLATED && existsSync(this.uidFile(id)) ? Number(readFileSync(this.uidFile(id), 'utf8')) : undefined; }
@@ -184,7 +186,7 @@ export class LocalProvider implements SandboxProvider {
     const argv = typeof command === 'string' ? ['/bin/sh', '-c', command] : command;
     if (opts.signal?.aborted) return { code: null, signal: null, timedOut: false, aborted: true };
     const child = spawn(...limited(profile ? SANDBOX_EXEC : argv[0], [...(profile ? ['-p', profile, argv[0]] : []), ...argv.slice(1)]), {
-      cwd: dir, detached: true, stdio: ['ignore', 'pipe', 'pipe'], ...(uid === undefined ? {} : { uid, gid: uid }),
+      cwd: dir, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], ...(uid === undefined ? {} : { uid, gid: uid }),
       env: {
         PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: this.workspace(id), TMPDIR: process.env.TMPDIR ?? '/tmp', LANG: 'en_US.UTF-8',
         PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1', TERM: 'dumb', ...opts.env,

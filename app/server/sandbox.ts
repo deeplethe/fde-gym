@@ -37,7 +37,11 @@ export class SandboxUnavailable extends Error {}
 
 export interface SandboxProvider {
   /** How far commands are kept from everything outside the workspace. */
-  readonly isolation: 'user' | 'sandbox' | 'none' | 'vm';
+  readonly isolation: 'user' | 'sandbox' | 'container' | 'none' | 'vm';
+  /** The Python interpreter commands in the sandbox use (the customer's machine has Python 3.9). */
+  readonly python: string;
+  /** Where the workspace is as commands in the sandbox see it: what the coding agent is told. */
+  workspacePath(id: string): string;
   /**
    * Hand a freshly built workspace over to the sandbox. `readOnly`: top-level names in it that
    * commands may read but not change or remove.

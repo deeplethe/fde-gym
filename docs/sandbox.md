@@ -1,10 +1,12 @@
 # Sandboxes
 
-Where a run's workspace lives and where the commands run in it: today a folder on the runner's own
-disk, kept apart by a Unix user per run; next, a microVM per run on
+Where a run's workspace lives and where the commands run in it. Today there are two backends: a
+folder on the runner's own disk, kept apart by a Unix user per run (the local provider), or the same
+folder with the commands in a Docker container per run (the Docker provider, for Windows and for
+any machine with Docker). Next is a microVM per run on
 [CubeSandbox](https://github.com/TencentCloud/CubeSandbox). This note describes the seam between
-the two (`SandboxProvider`), how the coding agent works through it, and the design of the
-CubeSandbox backend. Nothing in the CubeSandbox part is built yet.
+them (`SandboxProvider`), how the coding agent works through it, and the design of the CubeSandbox
+backend. Nothing in the CubeSandbox part is built yet.
 
 ## What runs where
 
@@ -28,7 +30,9 @@ network, with a token good for that one run.
 
 ```ts
 interface SandboxProvider {
-  readonly isolation: 'user' | 'sandbox' | 'none' | 'vm';
+  readonly isolation: 'user' | 'sandbox' | 'container' | 'none' | 'vm';
+  readonly python: string;                           // the interpreter commands in the sandbox use
+  workspacePath(id): string;                         // the workspace as commands see it (what the agent is told)
   create(id, { readOnly }): Promise<void>;          // hand a freshly built workspace over
   exec(id, command | argv, { cwd, onData(chunk, stream), signal, timeoutMs, env }): Promise<{ code, signal, timedOut, aborted }>;
   readFile(id, path, { maxBytes }): Promise<Buffer>;
@@ -101,6 +105,42 @@ What the local provider does **not** give:
   follows a link out of the workspace that is there when it checks.)
 
 These are what the microVM backend is for.
+
+## The Docker provider
+
+`app/server/sandbox-docker.ts`, turned on with `FDEGYM_SANDBOX=docker`. It is for a machine whose
+own processes cannot be kept apart: Windows (where it is the only way to run commands at all), or
+macOS and Linux outside the runner's image, with Docker Desktop or Docker Engine beside the server.
+
+- **Files stay on the server's disk.** The workspace is where the local provider keeps it, so the
+  harness builds, serves and grades it as before. The server's own reads and writes are the local
+  provider's, with its refusals.
+- **Commands run in the run's container** (`docker exec`). `create` starts one container per run
+  from `python:3.9-slim-bookworm` (`FDEGYM_DOCKER_IMAGE`) with:
+  - the workspace bound in at `/workspace`;
+  - the read-only entries (`TASK.md`, `bin/`, `docs/`, `data/`) bound in again on top, read-only,
+    so a command can neither change nor remove them;
+  - an unprivileged user (the server's own uid on Linux and macOS, so the files stay the server's),
+    `--cap-drop ALL`, `no-new-privileges`;
+  - the run's own limits: `--memory` (2 GB), `--cpus` (2), `--pids-limit` (512).
+- **No network** (`--network none`). The workspace's tools call the run's stakeholders, LLM gateway
+  and customer services at `127.0.0.1:<port>`, as on the customer's machine. A small Python relay in
+  the container listens on exactly those ports, taken from the run's `meta.json`. It passes each
+  connection to the server over the relay's own `docker exec` standard input and output, and the
+  server opens it to the same port on its own `127.0.0.1`. Nothing else is reachable: not the
+  internet, not the machine, not other runs. (Docker's `--internal` networks do not reach the host
+  under Docker Desktop, hence the relay.)
+- **Ending a command** ends it in the container. Each command starts in a session of its own
+  (`setsid`) and writes down its process group. Stopping or timing out kills that group with
+  `os.killpg` (the image's `sh` is dash, whose `kill` cannot take a group), then the `docker exec`
+  client. A shell line goes in on standard input, so a long one is not cut short by Windows'
+  command-line limit.
+- **Restarts.** The provider remembers which containers are up only in memory. After the server,
+  Docker or the machine restarts, the next command starts the run's container again, or makes it
+  again if it is gone. `destroy` removes it.
+
+What it does not cover: a trial day and grading still run the delivered system on the server's
+machine, from the harness's own process tree (the CubeSandbox design below moves them into a clone).
 
 ## The coding agent and the sandbox
 
@@ -226,11 +266,8 @@ and refuses `..`, as the local one does. A link out of the workspace is no longe
 host, since the VM is the boundary and the provider's writes run as `learner`. Such links are still
 refused, so that both providers behave alike.
 
-It needs two small additions to the interface:
-
-- The workspace's path as the model should be told it. That is `/home/learner/workspace` here,
-  where `server/pi.ts` now passes the local folder.
-- `exec` with a writable stdin, for grading (see below).
+`workspacePath` is `/home/learner/workspace` here, as `/workspace` is for the Docker provider. One
+addition to the interface is still needed: `exec` with a writable stdin, for grading (see below).
 
 ### One template per case version, one clone per run
 

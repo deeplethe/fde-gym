@@ -6,7 +6,7 @@
  *   pnpm dev     Vite (front end, port 5173) + this server (port 8787, API only)
  *   pnpm build   build the front end into dist/
  *   pnpm start   this server serves the API and dist/ (port from PORT, default 8787)
- *   (API_PORT overrides PORT; the dev script pins it to 8787, where Vite proxies /api)
+ *   (API_PORT overrides PORT; under pnpm dev the API stays on 8787, where Vite proxies /api)
  */
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -21,7 +21,7 @@ import { authRoutes, currentUser, identity, publicUser } from './auth';
 import { casesFromStorage, importArchive, importFolder } from './cases-store';
 import { catalog, deleteCase, editCase, type Catalog } from './catalog';
 import { db, migrate } from './db';
-import { IMPORT_DIR } from './engine-paths';
+import { apiPort, IMPORT_DIR } from './engine-paths';
 import { errorText, langOf, translate } from './errors';
 import { setLearner } from './learner';
 import { agentRoutes, forgetLocalTurns, resumeTurns } from './agent';
@@ -359,8 +359,7 @@ if (existsSync(DIST)) {
   app.get('*', (c) => c.html(index)); // client-side routes
 }
 
-// API_PORT wins so that a PORT meant for the dev front end (Vite) doesn't pull the API onto it.
-const port = Number(process.env.API_PORT ?? process.env.PORT ?? 8787);
+const port = apiPort();
 const hostname = process.env.HOST ?? '127.0.0.1';
 // Learners' code runs with this server's privileges (see ./harness). Listening beyond this machine
 // has to be a deliberate choice, made once the server itself is inside a container or VM.
@@ -408,7 +407,7 @@ try {
 
 const server = serve({ fetch: app.fetch, port, hostname }, async () => {
   const n = (await catalog()).records.length;
-  const own = !LOCAL_RUNNER ? 'none of its own' : here.execMode === 'off' ? 'its own, without a terminal' : `its own (commands: ${{ user: 'one user per run', sandbox: 'sandboxed to the workspace', none: 'NOT ISOLATED' }[here.isolation]})`;
+  const own = !LOCAL_RUNNER ? 'none of its own' : here.execMode === 'off' ? 'its own, without a terminal' : `its own (commands: ${{ user: 'one user per run', sandbox: 'sandboxed to the workspace', container: 'one container per run', none: 'NOT ISOLATED' }[here.isolation]})`;
   console.log(`FDE Gym server on http://${hostname}:${port} (${n} case${n === 1 ? '' : 's'} in the library; files in ${storageName()}; sandboxes: ${own}${REMOTE_RUNNERS ? ', and the runners that connect' : ''})`);
   if (!LOCAL_RUNNER && !REMOTE_RUNNERS) console.warn('No runs can be started: the site runs no cases itself (FDEGYM_LOCAL_RUNNER=0) and no runner can join it (FDEGYM_RUNNER_TOKEN is not set).');
 });

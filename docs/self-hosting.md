@@ -164,6 +164,26 @@ You need Node 22, pnpm and Python 3.9 or later. Asking the customer's people and
 model the harness is set up with, so its key file has to be in place (`~/.fdegym/openrouter_key`, or
 `FDEGYM_OPENROUTER_KEY_FILE`).
 
+**On Windows**, run the site the same way, with each run's commands in a Docker container of its own
+(Windows has no way to keep them apart on the machine itself):
+
+- Node 22.12 or later (Vite needs it), pnpm, Python 3.9 or later, Git for Windows (its `diff`
+  shows the Changes tab), and Docker Desktop, running.
+- Set `FDEGYM_SANDBOX=docker`. If `python3` is the Microsoft Store's placeholder, set
+  `FDEGYM_PYTHON=py` (or the interpreter's full path) for the harness.
+- The first run pulls `python:3.9-slim-bookworm`, the image each run's container starts from.
+
+In PowerShell:
+
+```powershell
+$env:FDEGYM_SANDBOX = 'docker'; $env:FDEGYM_PYTHON = 'py'
+cd app; pnpm install; pnpm dev
+```
+
+`FDEGYM_SANDBOX=docker` works the same on macOS and Linux, with Docker Desktop or Docker Engine:
+see Security for what it keeps apart. To run the whole site in Docker Desktop instead, use
+`docker compose` as above.
+
 `pnpm build` then `PORT=8787 pnpm start` runs it as one process that serves the pages and the API;
 `./deploy-local.sh` does both and keeps it running.
 
@@ -203,13 +223,17 @@ local PostgreSQL and is skipped when there is none. `pnpm typecheck` checks the 
 | `FDEGYM_KEEP_WORKSPACE_DAYS` | A run that is over keeps its files on its runner this many days, to be looked at; then they are cleared, and its result and record stay (default 30; `0` for always) |
 | `FDEGYM_EXEC_SANDBOX` | `0` turns off the macOS sandbox around commands |
 | `FDEGYM_EXEC_UID_BASE` | Run each run's commands as a system user of its own (ids counted from this number). The server must run as root; the image sets it, see Security |
+| `FDEGYM_SANDBOX` | `docker`: run each run's commands in a Docker container of its own (needed on Windows; see Security). Default: on this machine |
+| `FDEGYM_DOCKER`, `FDEGYM_DOCKER_IMAGE` | With `FDEGYM_SANDBOX=docker`: the docker command (default `docker`), and the image a run's container starts from (default `python:3.9-slim-bookworm`; it needs `/bin/sh`, `setsid` and `python3`) |
+| `FDEGYM_DOCKER_MEMORY`, `FDEGYM_DOCKER_CPUS` | Memory and CPUs per run's container (default `2g` and `2`); `FDEGYM_EXEC_NPROC` limits its processes |
+| `FDEGYM_DIFF` | GNU `diff`, for the Changes tab (default `diff`; on Windows, Git for Windows' when `diff` is not on the PATH) |
 | `FDEGYM_ALLOW_REMOTE` | Must be `1` to listen on anything but this machine, see Security |
 | `FDEGYM_ADMIN_EMAILS` | Comma-separated addresses that become admins when they sign up or sign in. Without it, **the first account to sign up becomes the admin** |
 | `FDEGYM_ADMIN_TOKEN` | A maintainer token (`Authorization: Bearer <token>`), for scripts and first set-up |
 | `FDEGYM_SECRET` | Master key for the SMTP password and the agent's API key saved in the admin console. Generated into `secret.key` in the data folder when not set |
 | `FDEGYM_PUBLIC_URL` | The site's public address; password-reset mail links to it |
 | `FDEGYM_TRUST_PROXY` | `1` behind a reverse proxy |
-| `PORT` / `HOST` | Where to listen (default 127.0.0.1:8787). `API_PORT` wins over `PORT` |
+| `PORT` / `HOST` | Where to listen (default 127.0.0.1:8787). `API_PORT` wins over `PORT`; under `pnpm dev` only `API_PORT` moves the API (Vite has `PORT`) |
 
 What the harness reads applies as well: `FDEGYM_OPENROUTER_KEY_FILE`, `FDEGYM_PROXY`,
 `FDEGYM_MODEL` (see [harness/README.md](../harness/README.md)). The database's and the store's
@@ -270,6 +294,13 @@ commands are kept in:
 - `sandboxed to the workspace` (macOS): commands from the terminal and from the coding agent run in
   the system sandbox. They cannot read or write the home folder, the repository or the data folder,
   except that run's own workspace.
+- `one container per run` (`FDEGYM_SANDBOX=docker`, any system with Docker; on Windows the only
+  way): commands from the terminal and from the coding agent run in that run's own container, as an
+  unprivileged user with no capabilities, under its own memory, CPU and process limits. The
+  workspace is bound in, with what the customer handed over bound in again read-only. The container
+  has no network: a relay through `docker exec` lets it reach that run's own stakeholders, LLM
+  gateway and customer services on this machine, and nothing else, not the internet and not other
+  runs. A trial day and grading still run the delivered system on this machine, as below.
 - `NOT ISOLATED` (other systems, or a process that is itself inside another sandbox): nothing keeps
   them in. For your own use only.
 

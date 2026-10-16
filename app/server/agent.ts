@@ -18,6 +18,7 @@ import type { Hono } from 'hono';
 import { fetch as proxiedFetch, ProxyAgent } from 'undici';
 import { agentConfig, contextWindow } from './agent-settings';
 import { db, json } from './db';
+import { apiPort } from './engine-paths';
 import type { AgentLine } from './pi';
 import { RunnerOffline, type Runner } from './runner-api';
 import { SessionError } from './session-error';
@@ -171,7 +172,7 @@ export async function agentBusy(runId: string): Promise<boolean> {
 }
 
 /** Where pi on this very machine reaches the relay below; a runner elsewhere uses the site's address as it knows it. */
-const SELF = `http://127.0.0.1:${Number(process.env.API_PORT ?? process.env.PORT ?? 8787)}/api/agent/v1`;
+const SELF = `http://127.0.0.1:${apiPort()}/api/agent/v1`;
 
 export async function stopAgent(runId: string, runner?: Runner): Promise<boolean> {
   const c = running.get(runId);
