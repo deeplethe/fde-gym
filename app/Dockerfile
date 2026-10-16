@@ -28,7 +28,8 @@ WORKDIR /srv/fdegym
 COPY harness harness
 COPY --from=build /srv/fdegym/app app
 # Learners' commands run as other users (FDEGYM_EXEC_UID_BASE): nothing here is theirs to read,
-# except the installed packages, because the coding agent (pi, one of them) runs as the learner's user.
+# except the installed packages (nothing in them is secret; the coding agent, pi, runs as root
+# beside the workspace and works in it through the run's user, see server/pi.ts).
 RUN chmod -R go-rwx /srv/fdegym /root \
  && chmod go+x /srv/fdegym /srv/fdegym/app \
  && chmod -R go+rX /srv/fdegym/app/node_modules

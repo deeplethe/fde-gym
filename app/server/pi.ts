@@ -1,10 +1,16 @@
 /**
- * The coding agent is pi (https://pi.dev, the `pi` command of @earendil-works/pi-coding-agent), run
- * on the machine that holds the workspace. One turn is one run of pi without its interface
- * (`--mode json`): it starts in the workspace as the same user a learner's commands run as (or
- * under the same sandbox), works with its own tools (read, bash, edit, write), prints what happens
- * as lines of JSON, and exits. Its session file is kept beside the workspace, so the next turn
- * carries on the same conversation, and pi compacts it when it grows.
+ * The coding agent is pi (https://pi.dev, the `pi` command of @earendil-works/pi-coding-agent). One
+ * turn is one run of pi without its interface (`--mode json`): it works with its tools (read,
+ * bash, edit, write), prints what happens as lines of JSON, and exits. Its session file is kept
+ * beside the workspace, so the next turn carries on the same conversation, and pi compacts it when
+ * it grows.
+ *
+ * pi itself runs outside the run's sandbox, as the server, in a folder of its own: the token it
+ * calls the model with is never where the workspace's user (or whatever runs as it) can read it.
+ * Its four tools are pi's own, given other hands (see TOOLS below): each file it reads or writes
+ * and each command it runs goes back to this server over pi's IPC channel, and the server does it
+ * in the run's sandbox (./sandbox), the way it does what the learner asks for. So the agent's
+ * commands run exactly where and as the learner's terminal commands do, wherever that sandbox is.
  *
  * pi holds no model key. It is pointed at the site's relay for the agent (./agent) with a token
  * that is good for this one turn of this one run; the site adds its own key there and counts what
@@ -12,13 +18,14 @@
  * extensions, skills, MCP servers or context files from the workspace or the machine.
  *
  * Two things stay with the learner on purpose, talking to the customer's people and starting a
- * trial day. A small extension written beside the session refuses the two commands that do them.
+ * trial day. The same extension refuses the two commands that do them.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { chownSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, existsSync, lchownSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ROOT } from './engine-paths';
-import { ISOLATED, limited, runDir, runUid, SANDBOX_EXEC, SANDBOXED, sandboxProfile, workspaceDir } from './harness';
+import { ISOLATED, kept, runDir, sandbox, workspaceDir } from './harness';
+import { SandboxUnavailable } from './sandbox';
 import { SessionError } from './session-error';
 
 const PI_CLI = process.env.FDEGYM_PI_CLI || join(ROOT, 'app', 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js');
@@ -82,8 +89,97 @@ type AgentWhat =
 /** Lines that are only for watching live, and are neither kept nor told again. */
 const LIVE_ONLY = new Set<AgentWhat['t']>(['delta', 'output', 'think', 'drafting']);
 
-const GUARD = `// Written by FDE Gym for each turn. Asking the customer's people and starting a trial day are the engineer's to do.
+/**
+ * The extension pi is started with, written for each turn: pi's own read, write, edit and bash,
+ * working on the workspace (at `workspace`, as the model is told) through the server instead of
+ * on this machine's disk, and the refusal of bin/ask and bin/pilot. pi's own folder (`home`, its
+ * working directory) is put out of sight: the model is told it works in the workspace.
+ */
+const TOOLS = (workspace: string, home: string) => `// Written by FDE Gym for each turn.
+import { constants } from 'node:os';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { createBashToolDefinition, createEditToolDefinition, createReadToolDefinition, createWriteToolDefinition } from '@earendil-works/pi-coding-agent';
+
+const WORKSPACE = ${JSON.stringify(workspace)};
+const HOME = ${JSON.stringify(home)};
+
+// Requests to the server that started pi, and their answers, over its IPC channel. The channel
+// keeps pi alive only while a request is out, so pi still exits when its turn is over.
+const channel = process.channel;
+if (channel) channel.unref();
+const pending = new Map();
+let next = 0;
+const bytes = (v) => Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+process.on('message', (m) => {
+  const p = m && pending.get(m.id);
+  if (!p) return;
+  if (m.data) { if (p.onData) p.onData(bytes(m.data)); return; }
+  pending.delete(m.id);
+  if (!pending.size && channel) channel.unref();
+  if (m.ok) p.ok(m.value); else p.fail(new Error(m.error));
+});
+function ask(op, args, onData, signal) {
+  if (!process.send || !process.connected) return Promise.reject(new Error('The workspace cannot be reached.'));
+  const id = ++next;
+  return new Promise((ok, fail) => {
+    pending.set(id, { ok, fail, onData });
+    if (channel) channel.ref();
+    process.send({ ...args, id, op });
+    if (signal) signal.addEventListener('abort', () => { if (pending.has(id) && process.connected) process.send({ id, op: 'abort' }); }, { once: true });
+  });
+}
+
+/** A path from the workspace's root; nothing outside it can be reached. */
+function inside(path) {
+  const rel = relative(WORKSPACE, resolve(WORKSPACE, path));
+  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error(path + ' is outside the workspace (' + WORKSPACE + '): only files in it can be reached.');
+  return rel.split(sep).join('/') || '.';
+}
+
+const MAGIC = [[[0x89, 0x50, 0x4e, 0x47], 'image/png'], [[0xff, 0xd8, 0xff], 'image/jpeg'], [[0x47, 0x49, 0x46, 0x38], 'image/gif']];
+const readOps = {
+  readFile: async (p) => bytes(await ask('read', { path: inside(p) })),
+  access: async (p) => { await ask('access', { path: inside(p) }); },
+  detectImageMimeType: async (p) => {
+    const head = bytes(await ask('read', { path: inside(p), max: 12 }));
+    for (const [magic, type] of MAGIC) if (magic.every((b, i) => head[i] === b)) return type;
+    return head.subarray(0, 4).toString('latin1') === 'RIFF' && head.subarray(8, 12).toString('latin1') === 'WEBP' ? 'image/webp' : null;
+  },
+};
+const writeOps = {
+  writeFile: async (p, content) => { await ask('write', { path: inside(p), content }); },
+  mkdir: async (p) => { await ask('mkdir', { path: inside(p) }); },
+};
+const editOps = {
+  readFile: readOps.readFile,
+  writeFile: writeOps.writeFile,
+  access: async (p) => { await ask('access', { path: inside(p), write: true }); },
+};
+const bashOps = {
+  exec: async (command, cwd, { onData, signal, timeout }) => {
+    if (signal && signal.aborted) throw new Error('aborted');
+    const r = await ask('exec', { command, cwd: inside(cwd), timeout }, onData, signal);
+    if (r.aborted || (signal && signal.aborted)) throw new Error('aborted');
+    if (r.timedOut) throw new Error('timeout:' + timeout);
+    return { exitCode: r.code !== null ? r.code : r.signal ? 128 + (constants.signals[r.signal] || 0) : null };
+  },
+};
+
+/** A tool that works in the workspace whatever pi's own working directory is. */
+const there = (tool) => ({
+  ...tool,
+  execute: (id, params, signal, onUpdate, ctx) => tool.execute(id, params, signal, onUpdate, ctx && new Proxy(ctx, {
+    get: (t, k) => { if (k === 'cwd') return WORKSPACE; const v = Reflect.get(t, k); return typeof v === 'function' ? v.bind(t) : v; },
+  })),
+});
+
 export default function (pi) {
+  pi.registerTool(there(createReadToolDefinition(WORKSPACE, { operations: readOps })));
+  pi.registerTool(there(createWriteToolDefinition(WORKSPACE, { operations: writeOps })));
+  pi.registerTool(there(createEditToolDefinition(WORKSPACE, { operations: editOps })));
+  pi.registerTool(there(createBashToolDefinition(WORKSPACE, { operations: bashOps, exposeSessionEnvironment: false })));
+  pi.on('before_agent_start', (event) => (event.systemPrompt.includes(HOME) ? { systemPrompt: event.systemPrompt.split(HOME).join(WORKSPACE) } : undefined));
+  // Asking the customer's people and starting a trial day are the engineer's to do.
   pi.on('tool_call', (event) => {
     if (event.toolName === 'bash' && /\\bbin\\/(ask|pilot)\\b/.test(String(event.input && event.input.command || ''))) {
       return { block: true, reason: "Not run: contacting the customer's people and starting a trial run are the engineer's to do. Tell them what you would ask, and whom." };
@@ -91,6 +187,77 @@ export default function (pi) {
   });
 }
 `;
+
+/** What pi's tools may ask of the server, one message on its IPC channel each (see TOOLS). */
+type ToolAsk = { id: number } & (
+  | { op: 'read'; path: string; max?: number }
+  | { op: 'access'; path: string; write?: boolean }
+  | { op: 'write'; path: string; content: string }
+  | { op: 'mkdir'; path: string }
+  | { op: 'exec'; command: string; cwd: string; timeout?: number }
+  | { op: 'abort' });
+/** Larger than this is not read whole into the agent's reply; head, tail or sed in bash still are. */
+const TOOL_MAX_READ = 32 * 1024 * 1024;
+
+/**
+ * Do in the run's sandbox what pi's tools ask for, as the learner's file API and terminal would:
+ * what was handed over to be read stays as it was.
+ */
+function serveTools(name: string, child: ChildProcess) {
+  const execs = new Map<number, AbortController>();
+  const tell = (m: object) => { try { if (child.connected) child.send(m); } catch { /* pi is gone */ } };
+  const fail = (path: string, e: unknown) => {
+    const said = e instanceof Error ? e.message : String(e);
+    if (said === '路径不在工作区内') return `${path}: outside the workspace (a link out of it is not followed)`;
+    if (said === '这个文件不能修改') return `${path}: the customer's material (TASK.md, bin/, docs/, data/) is read-only`;
+    if (e instanceof SandboxUnavailable) return 'The workspace cannot run commands right now.';
+    return `${path}: ${said}`;
+  };
+  const readOnly = (path: string) => { if (kept(path)) throw new Error('这个文件不能修改'); };
+  const op = async (m: Exclude<ToolAsk, { op: 'abort' }>): Promise<unknown> => {
+    switch (m.op) {
+      case 'read': {
+        const st = await sandbox.stat(name, m.path);
+        if (!st) throw new Error('No such file');
+        if (st.dir) throw new Error('Is a directory');
+        if (m.max === undefined && st.bytes > TOOL_MAX_READ) throw new Error(`Too large to read whole (${st.bytes} bytes); look at parts of it with bash`);
+        return sandbox.readFile(name, m.path, m.max === undefined ? {} : { maxBytes: m.max });
+      }
+      case 'access': {
+        if (!await sandbox.stat(name, m.path)) throw new Error('No such file');
+        if (m.write) readOnly(m.path);
+        return null;
+      }
+      case 'write': {
+        readOnly(m.path);
+        if ((await sandbox.stat(name, m.path))?.dir) throw new Error('Is a directory');
+        await sandbox.writeFile(name, m.path, m.content);
+        return null;
+      }
+      case 'mkdir': {
+        readOnly(m.path);
+        await sandbox.mkdir(name, m.path);
+        return null;
+      }
+      case 'exec': {
+        const stop = new AbortController();
+        execs.set(m.id, stop);
+        try {
+          return await sandbox.exec(name, m.command, {
+            cwd: m.cwd, signal: stop.signal, timeoutMs: m.timeout ? m.timeout * 1000 : undefined,
+            onData: (data) => tell({ id: m.id, data }),
+          });
+        } finally { execs.delete(m.id); }
+      }
+    }
+  };
+  child.on('message', (m: ToolAsk) => {
+    if (m.op === 'abort') { execs.get(m.id)?.abort(); return; }
+    op(m).then((value) => tell({ id: m.id, ok: true, value }), (e) => tell({ id: m.id, ok: false, error: fail('path' in m ? m.path : m.op === 'exec' ? m.cwd : '', e) }));
+  });
+  // Whatever pi's commands are still doing ends with it.
+  child.once('exit', () => { for (const stop of execs.values()) stop.abort(); });
+}
 
 const agentDir = (name: string) => join(runDir(name), 'agent');
 const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
@@ -109,10 +276,19 @@ const thinkingOf = (turn: AgentTurn): Thinking | undefined => {
   return th && (THINKING_LEVELS as readonly string[]).includes(th.level) && (THINKING_FORMATS as readonly string[]).includes(th.format) ? th : undefined;
 };
 
-/** The folder pi keeps its session and settings in, made ready for this turn: where the model is, and the guard. */
+/** Everything under a folder, made the server's. */
+function reclaim(path: string, uid: number) {
+  lchownSync(path, uid, uid);
+  if (statSync(path).isDirectory()) { chmodSync(path, 0o700); for (const e of readdirSync(path)) reclaim(join(path, e), uid); }
+}
+
+/** The folder pi keeps its session and settings in, made ready for this turn: where the model is, and its tools. */
 function prepare(name: string, turn: AgentTurn): string {
   const dir = agentDir(name);
   mkdirSync(join(dir, 'sessions'), { recursive: true });
+  // Before pi ran outside the sandbox it ran as the run's own user, who owned this folder; it is the server's now, and closed to that user.
+  if (ISOLATED && statSync(dir).uid !== process.getuid!()) reclaim(dir, process.getuid!());
+  rmSync(join(dir, 'guard.js'), { force: true });
   const th = thinkingOf(turn);
   writeFileSync(join(dir, 'models.json'), JSON.stringify({
     providers: {
@@ -130,10 +306,7 @@ function prepare(name: string, turn: AgentTurn): string {
       },
     },
   }), { mode: 0o600 });
-  writeFileSync(join(dir, 'guard.js'), GUARD, { mode: 0o600 });
-  const uid = runUid(name);
-  // pi runs as the run's own user and writes its session here; the rest of the run folder stays closed to it.
-  if (uid !== undefined) for (const p of [dir, join(dir, 'sessions'), join(dir, 'models.json'), join(dir, 'guard.js')]) chownSync(p, uid, uid);
+  writeFileSync(join(dir, 'tools.js'), TOOLS(real(workspaceDir(name)), real(dir)), { mode: 0o600 });
   return dir;
 }
 
@@ -167,33 +340,28 @@ export function agentTurn(name: string, turn: AgentTurn, onLine: (line: string) 
   if (running.has(name)) throw new SessionError('助手还在处理上一条消息');
   const ws = workspaceDir(name);
   if (!existsSync(ws)) throw new SessionError('这次练习的工作区已经不在了', 410);
-  const uid = runUid(name);
-  if (ISOLATED && uid === undefined) throw new SessionError('本站没有开放助手');
   const dir = prepare(name, turn);
   const sessions = join(dir, 'sessions');
-  const profile = SANDBOXED
-    ? sandboxProfile(name, { write: [dir], read: [dirname(dirname(real(PI_CLI))), join(ROOT, 'app', 'node_modules'), dirname(dirname(real(process.execPath)))] })
-    : undefined;
-  if (SANDBOXED && !profile) throw new SessionError('本站没有开放助手');
 
   const args = [
     PI_CLI, '--mode', 'json', '--print', '--offline', '--no-approve',
     '--no-extensions', '--no-mcp', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
-    '-e', join(dir, 'guard.js'), '--tools', 'read,bash,edit,write',
+    '-e', join(dir, 'tools.js'), '--tools', 'read,bash,edit,write',
     '--session-dir', sessions, ...(readdirSync(sessions).some((f) => f.endsWith('.jsonl')) ? ['--continue'] : []),
     '--provider', 'fdegym', '--model', turn.model, '--thinking', thinkingOf(turn)?.level ?? 'off', '--append-system-prompt', turn.system,
     // A message that begins with @ would be taken for a file to attach.
     '--', turn.message.startsWith('@') ? ` ${turn.message}` : turn.message,
   ];
-  const child = spawn(...limited(profile ? SANDBOX_EXEC : process.execPath, [...(profile ? ['-p', profile, process.execPath] : []), ...args]), {
-    cwd: ws, detached: true, stdio: ['ignore', 'pipe', 'pipe'], ...(uid === undefined ? {} : { uid, gid: uid }),
+  // In its own folder, not the workspace: pi would take settings from a .pi/ folder where it starts.
+  const child = spawn(process.execPath, args, {
+    cwd: dir, detached: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], serialization: 'advanced',
     env: {
-      PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: ws, TMPDIR: process.env.TMPDIR ?? '/tmp', LANG: 'en_US.UTF-8', TERM: 'dumb', NO_COLOR: '1',
-      PYTHONUNBUFFERED: '1', PYTHONDONTWRITEBYTECODE: '1',
+      PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: dir, TMPDIR: process.env.TMPDIR ?? '/tmp', LANG: 'en_US.UTF-8', TERM: 'dumb', NO_COLOR: '1',
       PI_CODING_AGENT_DIR: dir, PI_OFFLINE: '1', PI_SKIP_VERSION_CHECK: '1', PI_TELEMETRY: '0',
     },
   });
   running.set(name, child);
+  serveTools(name, child);
 
   let ended!: (r: TurnEnd) => void;
   const log: Log = { kept: [], bytes: 0, n: 0, to: onLine, end: new Promise((ok) => { ended = ok; }) };

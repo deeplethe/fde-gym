@@ -3,7 +3,7 @@
  * a scripted model. Needs no database and no model key.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -14,6 +14,8 @@ import { fakeModel, type Reply, type Seen } from './fake-model';
 const data = realpathSync(mkdtempSync(join(tmpdir(), 'fdegym-pi-test-')));
 process.env.FDEGYM_DATA = data;
 let pi: typeof import('../pi');
+/** What the run's sandbox was asked to do, by whom: pi's tools reach the workspace only through it. */
+const asked: { op: string; id: string; what: unknown }[] = [];
 let model: Awaited<ReturnType<typeof fakeModel>>;
 let script: (seen: Seen) => Reply = () => ({ text: 'ok' });
 /** What the model replies from here on; `n` counts its calls since this was set. */
@@ -21,6 +23,11 @@ function play(f: (seen: Seen, n: number) => Reply) { let n = 0; script = (seen) 
 
 before(async () => {
   pi = await import('../pi');
+  const { sandbox } = await import('../harness');
+  for (const op of ['exec', 'readFile', 'writeFile', 'mkdir'] as const) {
+    const real = (sandbox[op] as (...a: unknown[]) => unknown).bind(sandbox);
+    Object.assign(sandbox, { [op]: (id: string, what: unknown, ...rest: unknown[]) => { asked.push({ op, id, what }); return real(id, what, ...rest); } });
+  }
   model = await fakeModel((s) => script(s));
 });
 after(async () => {
@@ -216,4 +223,56 @@ test('an edit comes back with its change as a diff', async () => {
   assert.match(result.patch ?? '', /^\+TWO$/m);
   // Paths from the workspace's root, as everywhere else on the page.
   assert.ok(!(result.patch ?? '').includes(ws));
+});
+
+/** A turn's tool results, in the order the model asked for the tools (pi may run them side by side). */
+const resultsOf = (lines: AgentLine[]) => {
+  const order = lines.filter((l) => l.t === 'tool').map((l) => (l as { id: string }).id);
+  return (lines.filter((l) => l.t === 'result') as { id: string; output: string; failed: boolean }[]).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+};
+
+test('pi works outside the workspace: its tools read, write and run there through the sandbox, and the model is told it works there', async () => {
+  const { name, ws } = newRun();
+  play((_s, n) => (n === 1 ? { tools: [{ name: 'bash', args: { command: 'pwd; env' } }, { name: 'read', args: { path: 'TASK.md' } }, { name: 'write', args: { path: 'deliverables/plan.md', content: 'a plan' } }] } : { text: 'Done.' }));
+  const before = model.seen.length, from = asked.length;
+  const r = await run(name, 'look around');
+  assert.equal(r.code, 0, r.stderr);
+  const results = resultsOf(r.lines);
+  assert.deepEqual(results.map((l) => l.failed), [false, false, false]);
+  // The command ran in the workspace (shown from its root), with nothing of pi's own: not the turn's token, not its folder.
+  assert.match(results[0].output, /^\.\n/);
+  assert.doesNotMatch(results[0].output, /turn-token|PI_CODING_AGENT_DIR|\/agent\b/);
+  assert.equal(results[1].output, 'The brief.\n');
+  assert.equal(readFileSync(join(ws, 'deliverables', 'plan.md'), 'utf8'), 'a plan');
+  // (read looks at the start of the file first, for an image; write makes the folder first.)
+  assert.deepEqual([...new Set(asked.slice(from).filter((a) => a.id === name).map((a) => `${a.op} ${JSON.stringify(a.what)}`))].sort(),
+    ['exec "pwd; env"', 'mkdir "deliverables"', 'readFile "TASK.md"', 'writeFile "deliverables/plan.md"']);
+  // pi's own folder is where it runs, and the model is not told of it.
+  const agent = join(data, 'runs', name, 'agent');
+  const prompt = JSON.stringify(model.seen[before].body.messages[0]);
+  assert.ok(prompt.includes(ws), prompt);
+  assert.ok(!prompt.includes(agent), prompt);
+  assert.equal(existsSync(join(agent, 'tools.js')), true);
+  assert.equal(existsSync(join(agent, 'guard.js')), false);
+});
+
+test('what is outside the workspace, or was handed over to be read, is out of the reach of the agent\'s tools', async () => {
+  const { name, ws } = newRun();
+  writeFileSync(join(data, 'secret.txt'), 'not for the agent');
+  play((_s, n) => (n === 1 ? { tools: [
+    { name: 'read', args: { path: join(data, 'secret.txt') } },
+    { name: 'read', args: { path: '../agent/models.json' } },
+    { name: 'write', args: { path: 'TASK.md', content: 'rewritten' } },
+    { name: 'edit', args: { path: 'TASK.md', edits: [{ oldText: 'brief', newText: 'rewritten' }] } },
+    { name: 'bash', args: { command: 'ls', timeout: 5 } },
+  ] } : { text: 'Done.' }));
+  const r = await run(name, 'try');
+  assert.equal(r.code, 0, r.stderr);
+  const results = resultsOf(r.lines);
+  assert.deepEqual(results.map((l) => l.failed), [true, true, true, true, false]);
+  for (const l of results.slice(0, 2)) assert.match(l.output, /outside the workspace/);
+  for (const l of results.slice(2, 4)) assert.match(l.output, /read-only/);
+  assert.doesNotMatch(JSON.stringify(results), /not for the agent|turn-token/);
+  assert.equal(readFileSync(join(ws, 'TASK.md'), 'utf8'), 'The brief.\n');
+  assert.match(results[4].output, /TASK\.md/);
 });

@@ -72,30 +72,30 @@ test('putting a file back: a changed one as it was, a removed one restored, a ne
   writeFileSync(join(ws, 'system/app.py'), 'changed\n');
   rmSync(join(ws, 'system/deep'), { recursive: true });
   writeFileSync(join(ws, 'system/new.py'), 'new\n');
-  harness.revertFile(name, 'system/app.py');
-  harness.revertFile(name, 'system/deep/old.py');
-  harness.revertFile(name, 'system/new.py');
+  await harness.revertFile(name, 'system/app.py');
+  await harness.revertFile(name, 'system/deep/old.py');
+  await harness.revertFile(name, 'system/new.py');
   assert.equal(readFileSync(join(ws, 'system/app.py'), 'utf8'), 'a\n');
   assert.equal(readFileSync(join(ws, 'system/deep/old.py'), 'utf8'), 'x\n');
   assert.equal(existsSync(join(ws, 'system/new.py')), false);
   assert.deepEqual(await harness.changes(name), []);
   // The brief is not the learner's to change, so not theirs to put back either; and nothing outside the workspace is touched.
-  assert.throws(() => harness.revertFile(name, 'TASK.md'), /不能修改/);
-  assert.throws(() => harness.revertFile(name, '../baseline/system/app.py'), /不能修改|不在工作区内/);
+  await assert.rejects(harness.revertFile(name, 'TASK.md'), /不能修改/);
+  await assert.rejects(harness.revertFile(name, '../baseline/system/app.py'), /不能修改|不在工作区内/);
 });
 
-test('what the customer handed over is not changed through the file API: the brief, their documents and data, the harness\'s tools', () => {
+test('what the customer handed over is not changed through the file API: the brief, their documents and data, the harness\'s tools', async () => {
   const { name, ws } = newRun({ 'TASK.md': 'brief\n', 'docs/rules.md': 'rule\n', 'bin/ask': '#!/bin/sh\n', 'data/notes.txt': 'n\n', 'system/app.py': 'a\n' });
   for (const path of ['TASK.md', 'docs/rules.md', 'docs/new.md', 'bin/ask', 'data/notes.txt', 'data/new.csv', 'docs', 'bin', 'data']) {
-    assert.throws(() => harness.writeFile(name, path, 'changed'), /不能修改|是一个目录/, path);
-    assert.throws(() => harness.deletePath(name, path), /不能修改/, path);
+    await assert.rejects(harness.writeFile(name, path, 'changed'), /不能修改|是一个目录/, path);
+    await assert.rejects(harness.deletePath(name, path), /不能修改/, path);
   }
   assert.equal(readFileSync(join(ws, 'docs/rules.md'), 'utf8'), 'rule\n');
   assert.equal(readFileSync(join(ws, 'data/notes.txt'), 'utf8'), 'n\n');
   // What is the learner's to work in stays open, a folder of their own making included.
-  harness.writeFile(name, 'system/app.py', 'b\n');
-  harness.writeFile(name, 'deliverables/note.md', 'done\n');
-  harness.writeFile(name, 'scratch/try.py', 'x\n');
+  await harness.writeFile(name, 'system/app.py', 'b\n');
+  await harness.writeFile(name, 'deliverables/note.md', 'done\n');
+  await harness.writeFile(name, 'scratch/try.py', 'x\n');
   assert.equal(readFileSync(join(ws, 'scratch/try.py'), 'utf8'), 'x\n');
 });
 
@@ -132,20 +132,20 @@ con.commit()`, join(ws, 'data/clinic.db')]);
   assert.equal((await harness.sqliteView(name, 'data/clinic.db', 'visits')).total, 450);
 });
 
-test('a copy beside the original, named as a desktop names one', () => {
+test('a copy beside the original, named as a desktop names one', async () => {
   const { name, ws } = newRun({ 'TASK.md': 'brief\n', 'docs/rules.md': 'r\n', 'system/app.py': 'a\n', 'system/.env': 'K=1\n', 'system/lib/util.py': 'u\n', 'deliverables/note': 'n\n' });
-  assert.equal(harness.duplicate(name, 'system/app.py', 'zh'), 'system/app - 副本.py');
-  assert.equal(harness.duplicate(name, 'system/app.py', 'zh'), 'system/app - 副本 2.py');
-  assert.equal(harness.duplicate(name, 'system/app.py', 'en'), 'system/app copy.py');
+  assert.equal(await harness.duplicate(name, 'system/app.py', 'zh'), 'system/app - 副本.py');
+  assert.equal(await harness.duplicate(name, 'system/app.py', 'zh'), 'system/app - 副本 2.py');
+  assert.equal(await harness.duplicate(name, 'system/app.py', 'en'), 'system/app copy.py');
   assert.equal(readFileSync(join(ws, 'system/app - 副本 2.py'), 'utf8'), 'a\n');
   // No extension to keep: a name without one, a dotfile, a folder (copied with what is in it).
-  assert.equal(harness.duplicate(name, 'deliverables/note', 'en'), 'deliverables/note copy');
-  assert.equal(harness.duplicate(name, 'system/.env', 'en'), 'system/.env copy');
-  assert.equal(harness.duplicate(name, 'system/lib', 'zh'), 'system/lib - 副本');
+  assert.equal(await harness.duplicate(name, 'deliverables/note', 'en'), 'deliverables/note copy');
+  assert.equal(await harness.duplicate(name, 'system/.env', 'en'), 'system/.env copy');
+  assert.equal(await harness.duplicate(name, 'system/lib', 'zh'), 'system/lib - 副本');
   assert.equal(readFileSync(join(ws, 'system/lib - 副本/util.py'), 'utf8'), 'u\n');
   // What is kept cannot have a copy made beside it, and nothing is copied from outside.
-  assert.throws(() => harness.duplicate(name, 'docs/rules.md', 'zh'), /只读/);
-  assert.throws(() => harness.duplicate(name, 'TASK.md', 'zh'), /只读/);
-  assert.throws(() => harness.duplicate(name, '../baseline/system/app.py', 'zh'), /不在工作区内|只读/);
-  assert.throws(() => harness.duplicate(name, 'system/none.py', 'zh'), /文件不存在/);
+  await assert.rejects(harness.duplicate(name, 'docs/rules.md', 'zh'), /只读/);
+  await assert.rejects(harness.duplicate(name, 'TASK.md', 'zh'), /只读/);
+  await assert.rejects(harness.duplicate(name, '../baseline/system/app.py', 'zh'), /不在工作区内|只读/);
+  await assert.rejects(harness.duplicate(name, 'system/none.py', 'zh'), /文件不存在/);
 });

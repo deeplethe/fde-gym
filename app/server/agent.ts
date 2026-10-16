@@ -4,8 +4,8 @@
  * edits the customer's system, and the learner keeps the judgement: what the sponsor really needs,
  * whom to ask, when to stop.
  *
- * The agent is pi. It runs on the run's runner, in the workspace, as the user a learner's commands
- * run as (see ./pi); this module is the site's half. It starts a turn and passes on what happens,
+ * The agent is pi. It runs on the run's runner, beside the workspace, and works in it through the
+ * run's sandbox, where a learner's commands run (see ./pi); this module is the site's half. It starts a turn and passes on what happens,
  * keeps what the page shows of the conversation, and is where pi's model calls come to: pi holds no
  * key, so it calls POST /api/agent/v1/chat/completions here with a token good for the one turn, and
  * the site sends the call on to the endpoint set in the admin pages (./agent-settings), with its own

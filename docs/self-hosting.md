@@ -250,8 +250,9 @@ a whole has a ceiling on processes too (`FDEGYM_RUNNER_PIDS`); memory and CPU ar
 **What the customer handed over is to be read, not changed**: the brief (`TASK.md`), their
 documents (`docs/`) and data (`data/`), and the harness's tools for asking them (`bin/`). In the
 container they are root's, readable by the run's user and nothing more, and the workspace itself is
-sticky, so they cannot be overwritten, removed or renamed from the terminal or by the coding agent;
-under the macOS sandbox writing them is denied; and the file API refuses them. `system/` and
+sticky, so they cannot be overwritten, removed or renamed from the terminal or by the coding agent's
+commands; under the macOS sandbox writing them is denied; and the file API and the agent's file
+tools refuse them, under their own names or through a link. `system/` and
 `deliverables/` are the learner's, with anything else they make in the workspace. In the file tree
 the first are Resources, under one lock, and the rest Deliverables. (A trial day leaves its log
 under `data/`: the harness writes that, with its own rights.)
@@ -272,7 +273,8 @@ commands are kept in:
 - `NOT ISOLATED` (other systems, or a process that is itself inside another sandbox): nothing keeps
   them in. For your own use only.
 
-The file API only accepts paths inside the workspace and does not follow links that lead out of it.
+The file API and the agent's file tools only accept paths inside the workspace and do not follow
+links that lead out of it.
 The site refuses to listen beyond this machine unless `FDEGYM_ALLOW_REMOTE=1`.
 
 What none of this covers:
@@ -306,10 +308,12 @@ The workbench has a coding agent: you say what you want, it reads files, runs co
 and reports back. The terminal is still there, in a tab beside it.
 
 The agent is [pi](https://pi.dev) (`@earendil-works/pi-coding-agent`, installed with the app). Each
-message is one run of pi without its interface, on the runner that holds the workspace: it starts in
-the workspace as the user a learner's commands run as, works with its own tools (read, bash, edit,
-write), and keeps its session beside the workspace, so the conversation carries on from one message
-to the next.
+message is one run of pi without its interface, on the runner that holds the workspace. pi itself
+runs outside the run's sandbox, as the runner, in a folder of its own beside the workspace; its four
+tools (read, bash, edit, write) are pi's own, but each file they touch and each command they run is
+handed back to the runner, which does it in the run's sandbox exactly as it does what the learner
+asks for in the file tree and the terminal. pi keeps its session in its own folder, so the
+conversation carries on from one message to the next.
 
 - The site pays for the model. Set it in the admin console, under Agent: an OpenAI-compatible
   endpoint with tool calling and streaming, the model, the key, a proxy, the steps allowed per
@@ -319,9 +323,12 @@ to the next.
   the run spends. A runner on another machine therefore needs nothing more than its way to the site.
 - Until the admin page is filled in, the agent uses the harness's key file and default model: cheap,
   and not reliable at writing code. Set a proper one for real use.
-- pi is confined like a learner's commands: to the workspace, and in the container to that run's own
-  user. It starts with nothing from outside: no extensions, skills, MCP servers or context files, no
-  update check, no telemetry.
+- What the agent does is confined like a learner's commands: its commands run as that run's own user
+  in the container (or under the macOS sandbox), and its file tools reach only the workspace and
+  cannot change what the customer handed over. pi's token for the model, its settings and its
+  session are where neither the run's user nor the agent's commands can read them. It starts with
+  nothing from outside: no extensions, skills, MCP servers or context files, no update check, no
+  telemetry. (docs/sandbox.md has how this is laid out, and where it is going.)
 - The agent cannot contact the customer's people or start a trial day. Both have a cost, and both
   are left to the person.
 - A turn belongs to the runner pi is working on, not to the connection that asked for it. If the
