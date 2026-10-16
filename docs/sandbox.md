@@ -145,9 +145,9 @@ Not built. This is the design to build it against. The API facts come from Tence
 upstream (after v0.7.3) and from the working client in apex-research-respawn
 (`agent/pi/src/cube.ts`, which ran against v0.7.1-rc2).
 
-**Pin a version first.** The fork `WaylandYang/CubeSandbox` is at about v0.2.2. It has no volumes,
-no rollback, no live network update and no L7 egress (CubeEgress), and its `POST /sandboxes` drops
-`envVars`. Everything below needs v0.7.x: rebase the fork, or deploy upstream at a tagged release.
+**Use upstream at a tagged release, v0.7.3 or later** (`TencentCloud/CubeSandbox`). Everything below
+needs v0.7.x: volumes, rollback, live network updates and L7 egress (CubeEgress) are not in
+releases before it, and `POST /sandboxes` there drops `envVars`.
 
 ### Host
 
