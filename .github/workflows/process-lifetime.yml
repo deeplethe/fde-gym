@@ -1,0 +1,35 @@
+name: Delivered process lifetime
+
+on:
+  pull_request:
+    paths:
+      - harness/process_lifetime.py
+      - harness/isolate.py
+      - harness/run.py
+      - tests/test_process_lifetime.py
+      - .github/workflows/process-lifetime.yml
+  push:
+    branches: [main, dev]
+    paths:
+      - harness/process_lifetime.py
+      - harness/isolate.py
+      - harness/run.py
+      - tests/test_process_lifetime.py
+      - .github/workflows/process-lifetime.yml
+
+permissions:
+  contents: read
+
+jobs:
+  macos-lifetime:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Real-process cleanup regressions
+        run: python -m unittest discover -s tests -v

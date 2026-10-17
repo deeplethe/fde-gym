@@ -1,0 +1,11 @@
+--- a/oncall_incident/grader.py
++++ b/oncall_incident/grader.py
+@@ -214,7 +214,7 @@
+                 os.remove(rp)
+             status = "ok"
+             try:
+-                subprocess.run([sys.executable, "-c", RUNNER, ap, rp], cwd=sysdir, timeout=TIME_LIMIT,
++                ctx["run_delivered"]([sys.executable, "-c", RUNNER, ap, rp], cwd=sysdir, timeout=TIME_LIMIT,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             except subprocess.TimeoutExpired:
+                 status = "timeout"
