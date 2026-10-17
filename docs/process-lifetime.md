@@ -92,9 +92,16 @@ A fresh comparison on the current `dev` base reproduced the same 60-to-0 request
 count, unchanged 184-case detail arrays and KPI, with both probe processes observed
 spawning. See `docs/evaluation/2026-10-17-process-lifetime-dev.json` for that separate
 record and hashes of the preserved result/request files. Local app typecheck and
-build pass; app tests pass with the system Python (17 passed, 16 database-dependent
-tests skipped). Site-level smoke testing has not run because there is no running
-test site/admin account here, so deployment integration remains unverified.
+build pass. The initial app run passed 17 tests and skipped 16 without PostgreSQL.
+A subsequent disposable native PostgreSQL14 cluster and local S3-compatible emulator
+enabled all 33 app tests (33 passed, zero skipped). A synthetic first admin completed
+`scripts/smoke_cases.py` for the patched public oncall case: registration, session
+creation, files, submission and grading passed in 25 seconds; KPI -565, all184
+incidents processed, errors/timeouts/incidents and model calls zero. All temporary
+services were stopped afterward. See `docs/evaluation/2026-10-17-site-integration.json`.
+The grader reported environment scrubbing without a file sandbox (`FDEGYM_SANDBOX`
+unset). This verifies the local lifecycle integration; production object storage,
+other cases/OSes and complete OS containment are not established.
 
 To create the two source trees from this PR checkout (macOS, Python 3.9+, Git and
 `patch`; no model credentials needed):
