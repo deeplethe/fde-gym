@@ -93,17 +93,22 @@ def from_dir(src, dest, force):
     if not ids:
         sys.exit("no cases in %s" % src)
     for cid in ids:
+        source = os.path.join(src, cid)
         target = os.path.join(dest, cid)
-        if os.path.isdir(target) and not force:
+        # Even --force must not remove the source through an identical path or a symlink.
+        if os.path.isdir(target) and (not force or os.path.samefile(source, target)):
             print("%-28s already there" % cid)
             continue
         shutil.rmtree(target, ignore_errors=True)
-        shutil.copytree(os.path.join(src, cid), target, ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"))
+        shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"))
         print("%-28s copied" % cid)
     # data/ sits beside cases/ in the source, and has to sit beside it here too.
     raw = os.path.join(os.path.dirname(src), "data", "raw")
     here = os.path.join(os.path.dirname(os.path.abspath(dest)), "data", "raw")
-    if os.path.isdir(raw) and (force or not os.path.isdir(here)):
+    if os.path.isdir(raw):
+        if os.path.isdir(here) and (not force or os.path.samefile(raw, here)):
+            print("%-28s already there" % "data/raw")
+            return
         shutil.rmtree(here, ignore_errors=True)
         shutil.copytree(raw, here, ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"))
         print("%-28s copied" % "data/raw")
