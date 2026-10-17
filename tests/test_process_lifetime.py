@@ -8,9 +8,11 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "harness"))
 import isolate
+import process_lifetime
 
 
 def alive(pid):
@@ -107,15 +109,32 @@ class ProcessLifetimeTests(unittest.TestCase):
     def test_orphan_then_exec_is_cleaned(self):
         with tempfile.TemporaryDirectory(prefix="fde-lifetime-exec-", dir="/tmp") as d:
             child = ("import os,sys,time\n"
-                     "parent=os.getppid()\n"
+                     "parent=int(sys.argv[1])\n"
                      "while os.getppid()==parent: time.sleep(.001)\n"
-                     "os.execv(sys.executable,[sys.executable,'-c','import time; time.sleep(10)'])")
-            code = ("import subprocess,sys\n"
-                    "p=subprocess.Popen([sys.executable,'-c',%r],start_new_session=True,"
+                     "os.execv(sys.executable,[sys.executable,'-c',"
+                     "\"import time; open('exec.ready','w').close(); time.sleep(10)\"])")
+            code = ("import os,subprocess,sys\n"
+                    "p=subprocess.Popen([sys.executable,'-c',%r,str(os.getpid())],start_new_session=True,"
                     "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
                     "open('child.pid','w').write(str(p.pid))\n") % child
+            snapshot = process_lifetime._Processes.snapshot
+            first_snapshot = True
+
+            def after_exec(processes):
+                nonlocal first_snapshot
+                if first_snapshot:
+                    first_snapshot = False
+                    deadline = time.monotonic() + 3
+                    while not Path(d, "exec.ready").exists():
+                        if time.monotonic() >= deadline:
+                            self.fail("child did not orphan and exec before first discovery")
+                        time.sleep(.001)
+                return snapshot(processes)
+
             try:
-                self.run_delivered([sys.executable, "-c", code], cwd=d, timeout=3)
+                with mock.patch.object(process_lifetime._Processes, "snapshot", after_exec):
+                    self.run_delivered([sys.executable, "-c", code], cwd=d, timeout=5)
+                self.assertTrue(Path(d, "exec.ready").exists())
                 self.assertFalse(alive(int(Path(d, "child.pid").read_text())))
             finally:
                 p = Path(d, "child.pid")
@@ -124,6 +143,32 @@ class ProcessLifetimeTests(unittest.TestCase):
                         os.kill(int(p.read_text()), signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+
+    def test_missing_original_parent_identity_rejects_before_launch(self):
+        identity = process_lifetime._Identity()
+        identity.uniqueid, identity.version = 42, 7
+        # macOS through 15.3 returns the same struct size with this field reserved/zero.
+        with mock.patch.object(process_lifetime._Processes, "identity", return_value=identity):
+            with mock.patch.object(subprocess, "Popen", side_effect=AssertionError("process started")) as launch:
+                with self.assertRaises(process_lifetime.ProcessCleanupError):
+                    self.run_delivered([sys.executable, "-c", "pass"], timeout=3)
+                launch.assert_not_called()
+
+    def test_parent_generation_mismatch_rejects_before_delivered_code(self):
+        inspect = process_lifetime._Processes.identity
+
+        def mismatched(processes, pid):
+            info = inspect(processes, pid)
+            if info is not None and pid != os.getpid():
+                info.original_parent_version ^= 1
+            return info
+
+        with tempfile.TemporaryDirectory(prefix="fde-lifetime-capability-", dir="/tmp") as d:
+            with mock.patch.object(process_lifetime._Processes, "identity", mismatched):
+                with self.assertRaises(process_lifetime.ProcessCleanupError):
+                    self.run_delivered([sys.executable, "-c", "open('delivered.ran','w').close()"],
+                                       cwd=d, timeout=3)
+            self.assertFalse(Path(d, "delivered.ran").exists())
 
 
 if __name__ == "__main__":

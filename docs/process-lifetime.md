@@ -34,7 +34,8 @@ stdout/stderr, input, capture_output and check behavior. Other command shapes,
 shell execution and custom preexec hooks are rejected.
 
 Before importing delivered code, a trusted bootstrap stops inside the final
-interpreter. The supervisor records its kernel process identity and resumes it.
+interpreter. The supervisor verifies its original-parent generation against the
+launching process, records its kernel process identity and resumes it.
 It tracks original-parent identities and versions, including descendants that
 detach with `setsid` or exec after being reparented. Cleanup freezes identifiable
 descendants, expands the family again, kills it and verifies termination before
@@ -43,8 +44,10 @@ only after successful cleanup. Inspection/cleanup failures stop grading.
 
 ## Limits
 
-- Implemented and tested on macOS; unavailable native identity support fails closed.
-  Apple defines the unique-identity interface in a private header, so capability
+- Requires macOS 15.4 or later with working original-parent identity support;
+  unsupported kernels fail closed before delivered code runs. Earlier kernels return
+  the same structure size with that field reserved/zero, which is insufficient to
+  identify an unobserved child that execs after reparenting. Apple defines the unique-identity interface in a private header, so capability
   checks matter. Other hosts require a separate supported containment backend.
 - This is **bounded lifecycle hardening, not a complete security boundary**.
   A forked intermediate that exits before observation can hide further descendants.
@@ -58,7 +61,8 @@ only after successful cleanup. Inspection/cleanup failures stop grading.
 
 Primary implementation references:
 
-- [Apple process identity structure](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info_private.h)
+- [Apple macOS 15.4 source release](https://github.com/apple-oss-distributions/distribution-macOS/blob/macos-154/release.json)
+- [Apple process identity structure at the supported release](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.101.15/bsd/sys/proc_info_private.h)
 - [Apple process lineage implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_proc.c)
 - [Python subprocess contracts](https://docs.python.org/3/library/subprocess.html)
 
@@ -103,7 +107,7 @@ The grader reported environment scrubbing without a file sandbox (`FDEGYM_SANDBO
 unset). This verifies the local lifecycle integration; production object storage,
 other cases/OSes and complete OS containment are not established.
 
-To create the two source trees from this PR checkout (macOS, Python 3.9+, Git and
+To create the two source trees from this PR checkout (macOS 15.4+, Python 3.9+, Git and
 `patch`; no model credentials needed):
 
 ```sh
@@ -123,4 +127,8 @@ python3 tools/replay_process_lifetime.py --source "$experiment/after" --output "
 Timing changes how many later incidents the bounded probe reaches. The observed
 request count is an experimental result, not a fixed guarantee of the driver.
 The process regressions do not need any case files and also run in the dedicated
-macOS CI workflow on Python 3.9 and 3.13.
+macOS 15 CI workflow on Python 3.9 and 3.13. A separate macOS 14 job verifies
+explicit rejection without executing delivered code. An earlier macOS 14 CI run
+found a live orphan/exec escape; this prompted the runtime capability and parent-
+generation checks. The regression now forces orphaning and exec before the first
+discovery, rather than relying on scheduler timing.

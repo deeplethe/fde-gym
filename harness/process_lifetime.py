@@ -36,8 +36,14 @@ class _Processes:
         self.lib.proc_listpids.argtypes = [ctypes.c_uint32, ctypes.c_uint32,
                                           ctypes.c_void_p, ctypes.c_int]
         self.lib.proc_listpids.restype = ctypes.c_int
-        if self.identity(os.getpid()) is None:
+        observer = self.identity(os.getpid())
+        if observer is None:
             raise ProcessCleanupError("macOS unique process identities are unavailable")
+        # This slot was reserved/zero before macOS 15.4. Struct size alone cannot
+        # establish support: exec after reparenting loses the old parent UID.
+        if observer.original_parent_version == 0:
+            raise ProcessCleanupError("macOS original-parent identities are unavailable; macOS 15.4+ is required")
+        self.observer_version = observer.version
 
     def identity(self, pid):
         info = _Identity()
@@ -179,6 +185,8 @@ def run_delivered(args, *, timeout=None, check=False, capture_output=False, inpu
         identity = processes.identity(p.pid)
         if identity is None:
             raise ProcessCleanupError("delivered interpreter disappeared before identity handshake")
+        if identity.original_parent_version != processes.observer_version:
+            raise ProcessCleanupError("delivered interpreter original-parent generation did not match")
         family = _Family(processes, p.pid, identity)
         os.kill(p.pid, signal.SIGCONT)
         first = True
