@@ -33,3 +33,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Real-process cleanup regressions
         run: python -m unittest discover -s tests -v
+      - name: Diagnose orphan and exec process identity
+        if: always()
+        run: python tests/process_lifetime_diagnostic.py
