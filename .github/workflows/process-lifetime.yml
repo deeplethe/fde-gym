@@ -9,7 +9,7 @@ on:
       - tests/test_process_lifetime.py
       - .github/workflows/process-lifetime.yml
   push:
-    branches: [main, dev]
+    branches: [main, dev, fix/delivered-process-lifetime-dev]
     paths:
       - harness/process_lifetime.py
       - harness/isolate.py
