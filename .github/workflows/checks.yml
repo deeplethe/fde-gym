@@ -66,5 +66,7 @@ jobs:
           python-version: "3.9"
       - name: Compiles on Python 3.9
         run: python -m compileall -q harness scripts
+      - name: Tests
+        run: python -m unittest discover -s tests -v
       - name: Starts
         run: python harness/run.py --version
