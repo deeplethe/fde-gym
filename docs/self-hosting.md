@@ -164,6 +164,26 @@ You need Node 22, pnpm and Python 3.9 or later. Asking the customer's people and
 model the harness is set up with, so its key file has to be in place (`~/.fdegym/openrouter_key`, or
 `FDEGYM_OPENROUTER_KEY_FILE`).
 
+**On Windows**, run the site the same way, with each run's commands in a Docker container of its own
+(Windows has no way to keep them apart on the machine itself):
+
+- Node 22.12 or later (Vite needs it), pnpm, Python 3.9 or later, Git for Windows (its `diff`
+  shows the Changes tab), and Docker Desktop, running.
+- Set `FDEGYM_SANDBOX=docker`. If `python3` is the Microsoft Store's placeholder, set
+  `FDEGYM_PYTHON=py` (or the interpreter's full path) for the harness.
+- The first run pulls `python:3.9-slim-bookworm`, the image each run's container starts from.
+
+In PowerShell:
+
+```powershell
+$env:FDEGYM_SANDBOX = 'docker'; $env:FDEGYM_PYTHON = 'py'
+cd app; pnpm install; pnpm dev
+```
+
+`FDEGYM_SANDBOX=docker` works the same on macOS and Linux, with Docker Desktop or Docker Engine:
+see Security for what it keeps apart. To run the whole site in Docker Desktop instead, use
+`docker compose` as above.
+
 `pnpm build` then `PORT=8787 pnpm start` runs it as one process that serves the pages and the API;
 `./deploy-local.sh` does both and keeps it running.
 
@@ -203,13 +223,17 @@ local PostgreSQL and is skipped when there is none. `pnpm typecheck` checks the 
 | `FDEGYM_KEEP_WORKSPACE_DAYS` | A run that is over keeps its files on its runner this many days, to be looked at; then they are cleared, and its result and record stay (default 30; `0` for always) |
 | `FDEGYM_EXEC_SANDBOX` | `0` turns off the macOS sandbox around commands |
 | `FDEGYM_EXEC_UID_BASE` | Run each run's commands as a system user of its own (ids counted from this number). The server must run as root; the image sets it, see Security |
+| `FDEGYM_SANDBOX` | `docker`: run each run's commands in a Docker container of its own (needed on Windows; see Security). Default: on this machine |
+| `FDEGYM_DOCKER`, `FDEGYM_DOCKER_IMAGE` | With `FDEGYM_SANDBOX=docker`: the docker command (default `docker`), and the image a run's container starts from (default `python:3.9-slim-bookworm`; it needs `/bin/sh`, `setsid` and `python3`) |
+| `FDEGYM_DOCKER_MEMORY`, `FDEGYM_DOCKER_CPUS` | Memory and CPUs per run's container (default `2g` and `2`); `FDEGYM_EXEC_NPROC` limits its processes |
+| `FDEGYM_DIFF` | GNU `diff`, for the Changes tab (default `diff`; on Windows, Git for Windows' when `diff` is not on the PATH) |
 | `FDEGYM_ALLOW_REMOTE` | Must be `1` to listen on anything but this machine, see Security |
 | `FDEGYM_ADMIN_EMAILS` | Comma-separated addresses that become admins when they sign up or sign in. Without it, **the first account to sign up becomes the admin** |
 | `FDEGYM_ADMIN_TOKEN` | A maintainer token (`Authorization: Bearer <token>`), for scripts and first set-up |
 | `FDEGYM_SECRET` | Master key for the SMTP password and the agent's API key saved in the admin console. Generated into `secret.key` in the data folder when not set |
 | `FDEGYM_PUBLIC_URL` | The site's public address; password-reset mail links to it |
 | `FDEGYM_TRUST_PROXY` | `1` behind a reverse proxy |
-| `PORT` / `HOST` | Where to listen (default 127.0.0.1:8787). `API_PORT` wins over `PORT` |
+| `PORT` / `HOST` | Where to listen (default 127.0.0.1:8787). `API_PORT` wins over `PORT`; under `pnpm dev` only `API_PORT` moves the API (Vite has `PORT`) |
 
 What the harness reads applies as well: `FDEGYM_OPENROUTER_KEY_FILE`, `FDEGYM_PROXY`,
 `FDEGYM_MODEL` (see [harness/README.md](../harness/README.md)). The database's and the store's
@@ -250,8 +274,9 @@ a whole has a ceiling on processes too (`FDEGYM_RUNNER_PIDS`); memory and CPU ar
 **What the customer handed over is to be read, not changed**: the brief (`TASK.md`), their
 documents (`docs/`) and data (`data/`), and the harness's tools for asking them (`bin/`). In the
 container they are root's, readable by the run's user and nothing more, and the workspace itself is
-sticky, so they cannot be overwritten, removed or renamed from the terminal or by the coding agent;
-under the macOS sandbox writing them is denied; and the file API refuses them. `system/` and
+sticky, so they cannot be overwritten, removed or renamed from the terminal or by the coding agent's
+commands; under the macOS sandbox writing them is denied; and the file API and the agent's file
+tools refuse them, under their own names or through a link. `system/` and
 `deliverables/` are the learner's, with anything else they make in the workspace. In the file tree
 the first are Resources, under one lock, and the rest Deliverables. (A trial day leaves its log
 under `data/`: the harness writes that, with its own rights.)
@@ -269,10 +294,18 @@ commands are kept in:
 - `sandboxed to the workspace` (macOS): commands from the terminal and from the coding agent run in
   the system sandbox. They cannot read or write the home folder, the repository or the data folder,
   except that run's own workspace.
+- `one container per run` (`FDEGYM_SANDBOX=docker`, any system with Docker; on Windows the only
+  way): commands from the terminal and from the coding agent run in that run's own container, as an
+  unprivileged user with no capabilities, under its own memory, CPU and process limits. The
+  workspace is bound in, with what the customer handed over bound in again read-only. The container
+  has no network: a relay through `docker exec` lets it reach that run's own stakeholders, LLM
+  gateway and customer services on this machine, and nothing else, not the internet and not other
+  runs. A trial day and grading still run the delivered system on this machine, as below.
 - `NOT ISOLATED` (other systems, or a process that is itself inside another sandbox): nothing keeps
   them in. For your own use only.
 
-The file API only accepts paths inside the workspace and does not follow links that lead out of it.
+The file API and the agent's file tools only accept paths inside the workspace and do not follow
+links that lead out of it.
 The site refuses to listen beyond this machine unless `FDEGYM_ALLOW_REMOTE=1`.
 
 What none of this covers:
@@ -306,10 +339,12 @@ The workbench has a coding agent: you say what you want, it reads files, runs co
 and reports back. The terminal is still there, in a tab beside it.
 
 The agent is [pi](https://pi.dev) (`@earendil-works/pi-coding-agent`, installed with the app). Each
-message is one run of pi without its interface, on the runner that holds the workspace: it starts in
-the workspace as the user a learner's commands run as, works with its own tools (read, bash, edit,
-write), and keeps its session beside the workspace, so the conversation carries on from one message
-to the next.
+message is one run of pi without its interface, on the runner that holds the workspace. pi itself
+runs outside the run's sandbox, as the runner, in a folder of its own beside the workspace; its four
+tools (read, bash, edit, write) are pi's own, but each file they touch and each command they run is
+handed back to the runner, which does it in the run's sandbox exactly as it does what the learner
+asks for in the file tree and the terminal. pi keeps its session in its own folder, so the
+conversation carries on from one message to the next.
 
 - The site pays for the model. Set it in the admin console, under Agent: an OpenAI-compatible
   endpoint with tool calling and streaming, the model, the key, a proxy, the steps allowed per
@@ -319,9 +354,12 @@ to the next.
   the run spends. A runner on another machine therefore needs nothing more than its way to the site.
 - Until the admin page is filled in, the agent uses the harness's key file and default model: cheap,
   and not reliable at writing code. Set a proper one for real use.
-- pi is confined like a learner's commands: to the workspace, and in the container to that run's own
-  user. It starts with nothing from outside: no extensions, skills, MCP servers or context files, no
-  update check, no telemetry.
+- What the agent does is confined like a learner's commands: its commands run as that run's own user
+  in the container (or under the macOS sandbox), and its file tools reach only the workspace and
+  cannot change what the customer handed over. pi's token for the model, its settings and its
+  session are where neither the run's user nor the agent's commands can read them. It starts with
+  nothing from outside: no extensions, skills, MCP servers or context files, no update check, no
+  telemetry. (docs/sandbox.md has how this is laid out, and where it is going.)
 - The agent cannot contact the customer's people or start a trial day. Both have a cost, and both
   are left to the person.
 - A turn belongs to the runner pi is working on, not to the connection that asked for it. If the
