@@ -1,0 +1,63 @@
+name: Delivered process lifetime
+
+on:
+  pull_request:
+    paths:
+      - harness/process_lifetime.py
+      - harness/isolate.py
+      - harness/run.py
+      - tests/test_process_lifetime.py
+      - .github/workflows/process-lifetime.yml
+  push:
+    branches: [main, dev, fix/delivered-process-lifetime-dev]
+    paths:
+      - harness/process_lifetime.py
+      - harness/isolate.py
+      - harness/run.py
+      - tests/test_process_lifetime.py
+      - .github/workflows/process-lifetime.yml
+
+permissions:
+  contents: read
+
+jobs:
+  macos-lifetime:
+    runs-on: macos-15
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Real-process cleanup regressions
+        run: python -m unittest discover -s tests -v
+
+  macos14-rejects-unsupported:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Reject unavailable lineage before delivered code
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import platform, sys, tempfile
+          sys.path.insert(0, 'harness')
+          from process_lifetime import ProcessCleanupError, run_delivered
+          print('Host:', platform.mac_ver()[0], 'Python:', sys.version)
+          with tempfile.TemporaryDirectory() as directory:
+              marker = Path(directory, 'delivered.ran')
+              try:
+                  run_delivered([sys.executable, '-c', "open('delivered.ran','w').close()"],
+                                cwd=directory, timeout=3)
+              except ProcessCleanupError as exc:
+                  assert 'original-parent identities are unavailable' in str(exc), str(exc)
+                  print('Expected unsupported-host rejection:', exc)
+              else:
+                  raise AssertionError('Unsupported host accepted delivered code')
+              assert not marker.exists(), 'Delivered code executed before capability rejection'
+          PY
