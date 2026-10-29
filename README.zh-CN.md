@@ -126,7 +126,7 @@ FDE Gym 还处在早期。网站的数据库结构会随版本变化，而且只
 ```bibtex
 @misc{yang2026fdegym,
   title         = {{FDE-Gym}: The Last Mile of {AI} Delivery},
-  author        = {Yang, Dongxu and Yan, Hongda and Wang, Renxin and Zhang, Baoli and Zuo, Haojia and
+  author        = {Yang, Dongxu and Yan, Hongda and Zhang, Baoli and Zuo, Haojia and
                    Zhao, Ying and Chen, Youmin and Liao, Xiaojian and Gao, Congming and Jiang, Tianyang and
                    Chen, Yixiao and Wang, Qing and Yu, Zhiguo and Li, Xiaqing and Zhang, Yuhao and
                    Sun, Jiawen and Xu, Renzhe and Mi, De and Wu, Tiancheng and Fu, Xianya and
