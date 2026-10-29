@@ -147,7 +147,7 @@ please cite it:
 ```bibtex
 @misc{yang2026fdegym,
   title         = {{FDE-Gym}: The Last Mile of {AI} Delivery},
-  author        = {Yang, Dongxu and Yan, Hongda and Wang, Renxin and Zhang, Baoli and Zuo, Haojia and
+  author        = {Yang, Dongxu and Yan, Hongda and Zhang, Baoli and Zuo, Haojia and
                    Zhao, Ying and Chen, Youmin and Liao, Xiaojian and Gao, Congming and Jiang, Tianyang and
                    Chen, Yixiao and Wang, Qing and Yu, Zhiguo and Li, Xiaqing and Zhang, Yuhao and
                    Sun, Jiawen and Xu, Renzhe and Mi, De and Wu, Tiancheng and Fu, Xianya and
