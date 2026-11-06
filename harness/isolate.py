@@ -18,6 +18,8 @@ import subprocess
 import sys
 import tempfile
 
+from process_lifetime import run_delivered
+
 PROBE = (
     "import os, sys\n"
     "def can(p):\n"
